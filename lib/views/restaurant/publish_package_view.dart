@@ -7,8 +7,7 @@ import '../../services/firestore_service.dart';
 import '../../services/storage_service.dart';
 import '../widgets/package_card.dart';
 
-/// Formulario para publicar un paquete de excedentes.
-/// Devuelve `true` al hacer pop si se publicó.
+/// Devuelve `true` al cerrar si se publicó.
 class PublishPackageView extends StatefulWidget {
   const PublishPackageView({super.key, required this.restaurantId});
 

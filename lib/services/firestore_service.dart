@@ -4,7 +4,6 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../models/models.dart';
 
-/// Error de negocio con mensaje listo para mostrar al usuario.
 class RescueException implements Exception {
   final String message;
   const RescueException(this.message);
@@ -13,16 +12,8 @@ class RescueException implements Exception {
   String toString() => message;
 }
 
-/// Acceso a Firestore para paquetes y apartados.
-///
-/// Estructura de colecciones:
-/// - `users/{uid}`
-/// - `restaurants/{restaurantId}`
-/// - `restaurants/{restaurantId}/activePins/{pin}` → `{ orderId }`
-///   Índice de PINs en uso; garantiza unicidad por restaurante y permite
-///   validar un PIN con una sola lectura directa.
-/// - `packages/{packageId}`
-/// - `orders/{orderId}`
+/// `restaurants/{id}/activePins/{pin}` guarda los PIN en uso para que no se
+/// repitan y para validar un PIN con una sola lectura.
 class FirestoreService {
   FirestoreService({FirebaseFirestore? firestore, Random? random})
       : _db = firestore ?? FirebaseFirestore.instance,
@@ -31,7 +22,6 @@ class FirestoreService {
   final FirebaseFirestore _db;
   final Random _random;
 
-  /// Intentos de generar un PIN libre dentro de una misma transacción.
   static const int _maxPinAttempts = 10;
 
   CollectionReference<Map<String, dynamic>> get _users => _db.collection('users');
@@ -43,10 +33,6 @@ class FirestoreService {
 
   DocumentReference<Map<String, dynamic>> _pinRef(String restaurantId, String pin) =>
       _restaurants.doc(restaurantId).collection('activePins').doc(pin);
-
-  // ---------------------------------------------------------------------------
-  // Usuarios / restaurantes
-  // ---------------------------------------------------------------------------
 
   Future<void> saveUser(AppUser user) =>
       _users.doc(user.uid).set(user.toFirestore(), SetOptions(merge: true));
@@ -61,11 +47,7 @@ class FirestoreService {
       .snapshots()
       .map((doc) => doc.exists ? AppUser.fromFirestore(doc) : null);
 
-  /// Crea el perfil `users/{uid}` de una cuenta recién registrada.
-  ///
-  /// Si [role] es [UserRole.restaurante], también crea `restaurants/{id}` y lo
-  /// vincula al usuario en el mismo batch: nunca queda una cuenta de
-  /// restaurante sin restaurante ni un restaurante sin dueño.
+  /// Para restaurantes crea también `restaurants/{id}` en el mismo batch.
   Future<AppUser> createUserProfile({
     required String uid,
     required String email,
@@ -110,7 +92,6 @@ class FirestoreService {
     return user;
   }
 
-  /// Crea el restaurante y lo vincula a la cuenta del dueño en un solo batch.
   Future<String> createRestaurant(Restaurant restaurant) async {
     final ref = _restaurants.doc();
     final batch = _db.batch()
@@ -128,11 +109,6 @@ class FirestoreService {
     return doc.exists ? Restaurant.fromFirestore(doc) : null;
   }
 
-  // ---------------------------------------------------------------------------
-  // Restaurante: publicar paquetes
-  // ---------------------------------------------------------------------------
-
-  /// Publica un paquete nuevo y devuelve su id.
   Future<String> publishPackage({
     required String restaurantId,
     required String name,
@@ -185,8 +161,7 @@ class FirestoreService {
   Future<void> deactivatePackage(String packageId) =>
       _packages.doc(packageId).update({'isActive': false});
 
-  /// Feed para clientes: paquetes activos con existencias.
-  /// Requiere un índice compuesto (isActive, availableQuantity, createdAt).
+  /// Requiere índice (isActive, availableQuantity, createdAt).
   Stream<List<FoodPackage>> watchAvailablePackages() => _packages
       .where('isActive', isEqualTo: true)
       .where('availableQuantity', isGreaterThan: 0)
@@ -195,23 +170,14 @@ class FirestoreService {
       .snapshots()
       .map((s) => s.docs.map(FoodPackage.fromFirestore).toList());
 
-  /// Paquetes de un restaurante, del más reciente al más antiguo.
-  /// Requiere un índice compuesto (restaurantId, createdAt desc).
+  /// Requiere índice (restaurantId, createdAt desc).
   Stream<List<FoodPackage>> watchRestaurantPackages(String restaurantId) => _packages
       .where('restaurantId', isEqualTo: restaurantId)
       .orderBy('createdAt', descending: true)
       .snapshots()
       .map((s) => s.docs.map(FoodPackage.fromFirestore).toList());
 
-  // ---------------------------------------------------------------------------
-  // Usuario: apartar paquetes
-  // ---------------------------------------------------------------------------
-
-  /// Aparta [quantity] unidades de un paquete y genera el PIN de entrega.
-  ///
-  /// Todo ocurre en una transacción: si dos clientes apartan la última unidad
-  /// a la vez, solo uno lo consigue, y el PIN nunca se repite entre los
-  /// apartados activos del restaurante.
+  /// En transacción para no apartar más de lo que hay ni repetir PIN.
   Future<FoodOrder> reservePackage({
     required String packageId,
     required String userId,
@@ -320,12 +286,7 @@ class FirestoreService {
       .snapshots()
       .map((s) => s.docs.map(FoodOrder.fromFirestore).toList());
 
-  // ---------------------------------------------------------------------------
-  // Restaurante: validar PIN y entregar
-  // ---------------------------------------------------------------------------
-
   /// Valida el PIN capturado por el restaurante y marca la orden como entregada.
-  /// Devuelve la orden ya entregada para mostrar el resumen en pantalla.
   Future<FoodOrder> validatePinAndDeliver({
     required String restaurantId,
     required String pin,
@@ -380,7 +341,6 @@ class FirestoreService {
     });
   }
 
-  /// Apartados pendientes de entrega en un restaurante.
   Stream<List<FoodOrder>> watchRestaurantActiveOrders(String restaurantId) => _orders
       .where('restaurantId', isEqualTo: restaurantId)
       .where('status', isEqualTo: OrderStatus.apartado.name)

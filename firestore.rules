@@ -1,9 +1,8 @@
 rules_version = '2';
 
-// Reglas de ResCAT. Estructura descrita en lib/services/firestore_service.dart.
+// Estructura en lib/services/firestore_service.dart.
 service cloud.firestore {
   match /databases/{database}/documents {
-
     function signedIn() {
       return request.auth != null;
     }
@@ -30,10 +29,8 @@ service cloud.firestore {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly(fields);
     }
 
-    // -------------------------------------------------------------------------
     // users/{uid}: solo el propio usuario lo lee y escribe. Un perfil de
     // restaurante debe apuntar a un restaurante cuyo dueño sea ese usuario.
-    // -------------------------------------------------------------------------
     match /users/{uid} {
       allow read: if isSelf(uid);
 
@@ -54,9 +51,7 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // -------------------------------------------------------------------------
     // restaurants/{restaurantId}: perfil público; solo el dueño lo modifica.
-    // -------------------------------------------------------------------------
     match /restaurants/{restaurantId} {
       allow read: if signedIn();
       allow create: if signedIn() && request.resource.data.ownerUid == request.auth.uid;
@@ -77,10 +72,8 @@ service cloud.firestore {
       }
     }
 
-    // -------------------------------------------------------------------------
     // packages/{packageId}: el restaurante publica; los clientes solo tocan
     // existencias y disponibilidad al apartar o cancelar.
-    // -------------------------------------------------------------------------
     match /packages/{packageId} {
       allow read: if signedIn();
       allow create: if ownsRestaurant(request.resource.data.restaurantId);
@@ -89,9 +82,7 @@ service cloud.firestore {
       allow delete: if ownsRestaurant(resource.data.restaurantId);
     }
 
-    // -------------------------------------------------------------------------
     // orders/{orderId}: visibles para el cliente que apartó y su restaurante.
-    // -------------------------------------------------------------------------
     match /orders/{orderId} {
       allow read: if signedIn()
         && (resource.data.userId == request.auth.uid || ownsRestaurant(resource.data.restaurantId));

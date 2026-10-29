@@ -7,9 +7,7 @@ import 'auth_view.dart';
 import 'client/client_home_view.dart';
 import 'restaurant/restaurant_home_view.dart';
 
-/// Punto de entrada visual: decide qué mostrar según la sesión y el rol que
-/// tiene el usuario en `users/{uid}`. Como [SessionProvider] escucha ese
-/// documento en tiempo real, un cambio de rol en Firestore redirige solo.
+/// Elige la pantalla según la sesión y el rol.
 class HomeView extends StatelessWidget {
   const HomeView({super.key});
 
@@ -24,8 +22,7 @@ class HomeView extends StatelessWidget {
     final user = session.user;
     if (user == null) return const AuthView();
 
-    // La clave por usuario/restaurante garantiza que las suscripciones de cada
-    // panel se creen de nuevo si cambia la cuenta o el restaurante vinculado.
+    // La key recrea las suscripciones si cambia la cuenta o el restaurante.
     return switch (user.role) {
       UserRole.cliente => ClientHomeView(
           key: ValueKey('client-${user.uid}'),
@@ -40,8 +37,7 @@ class HomeView extends StatelessWidget {
   }
 }
 
-/// Cuenta con rol restaurante pero sin `restaurantId`: no debería ocurrir con
-/// el registro actual, pero puede pasar con datos editados a mano.
+/// Rol restaurante sin `restaurantId`; solo pasa con datos editados a mano.
 class _MissingRestaurantView extends StatelessWidget {
   const _MissingRestaurantView();
 

@@ -13,11 +13,8 @@ class AnalisisException implements Exception {
   String toString() => mensaje;
 }
 
-/// Análisis multimodal de la foto del platillo (RF2, tarea 2.3).
-///
-/// Usa Firebase AI Logic con el backend "Gemini Developer API": la API key
-/// vive en el proyecto de Firebase, no en el código ni en el teléfono.
-/// Para producción, activar App Check (ver README).
+/// Analiza la foto del platillo con Gemini vía Firebase AI Logic; la API key
+/// queda en Firebase, no en la app.
 class GeminiService {
   GeminiService({GenerativeModel? modelo})
       : _modelo = modelo ??
@@ -31,10 +28,9 @@ class GeminiService {
               ),
             );
 
-  /// Cambiar aquí si se usa otro modelo; nada más depende del nombre.
   static const nombreModelo = 'gemini-2.5-flash';
 
-  /// RNF1 pide < 5 s; se da margen de red antes de cancelar.
+  /// RNF1 pide < 5 s; se deja margen para la red.
   static const tiempoLimite = Duration(seconds: 8);
 
   final GenerativeModel _modelo;
@@ -56,7 +52,7 @@ Recibes la foto de un platillo recién preparado en un restaurante.
 No inventes marcas ni precios. Si no es comida, deja los textos vacíos.
 ''';
 
-  /// Esquema del contrato de la sección 1.3 del documento del sprint.
+  /// Contrato de la sección 1.3.
   static final esquemaRespuesta = Schema.object(
     properties: {
       'esComida': Schema.boolean(),

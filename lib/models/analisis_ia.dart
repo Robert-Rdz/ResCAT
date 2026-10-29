@@ -1,4 +1,3 @@
-/// Qué tan rápido se echa a perder el platillo, según la IA.
 enum Perecibilidad {
   alta,
   media,

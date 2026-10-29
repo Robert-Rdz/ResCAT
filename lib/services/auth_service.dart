@@ -4,7 +4,6 @@ import 'package:flutter/foundation.dart';
 import '../models/models.dart';
 import 'firestore_service.dart';
 
-/// Registro e inicio de sesión con email/contraseña.
 class AuthService {
   AuthService({FirebaseAuth? auth, FirestoreService? firestore})
       : _auth = auth ?? FirebaseAuth.instance,
@@ -17,11 +16,8 @@ class AuthService {
 
   User? get currentUser => _auth.currentUser;
 
-  /// Crea la cuenta en Auth y su perfil en Firestore con el [role] elegido.
-  ///
-  /// Para [UserRole.restaurante] son obligatorios [restaurantName] y
-  /// [restaurantAddress]. Si falla la escritura en Firestore, la cuenta de
-  /// Auth se elimina para no dejar usuarios sin perfil.
+  /// Si falla la escritura del perfil, borra la cuenta de Auth para no dejarla
+  /// sin perfil.
   Future<AppUser> register({
     required String email,
     required String password,
@@ -45,8 +41,7 @@ class AuthService {
     final firebaseUser = cred.user!;
 
     try {
-      // Garantiza que Firestore envíe el token de la cuenta recién creada;
-      // sin él las reglas ven request.auth == null y rechazan la escritura.
+      // Sin el token nuevo las reglas ven request.auth == null.
       await firebaseUser.getIdToken(true);
       final cleanPhone = phone?.trim() ?? '';
       final user = await _firestore.createUserProfile(

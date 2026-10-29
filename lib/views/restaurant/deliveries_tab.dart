@@ -10,8 +10,7 @@ import '../widgets/package_card.dart';
 
 final _time = DateFormat('HH:mm');
 
-/// Entregas del restaurante: captura del PIN que muestra el cliente y lista de
-/// apartados pendientes de recoger.
+/// Captura del PIN y apartados pendientes de recoger.
 class DeliveriesTab extends StatefulWidget {
   const DeliveriesTab({super.key, required this.restaurantId});
 
@@ -35,8 +34,7 @@ class _DeliveriesTabState extends State<DeliveriesTab> {
     super.dispose();
   }
 
-  /// Un stream de Firestore se cierra tras un error; para reintentar hay que
-  /// crear la consulta de nuevo.
+  /// Tras un error el stream se cierra; reintentar crea la consulta de nuevo.
   void _retryOrders() => setState(() {
         _orders = _firestore.watchRestaurantActiveOrders(widget.restaurantId);
       });
@@ -153,8 +151,7 @@ class _DeliveriesTabState extends State<DeliveriesTab> {
           child: StreamBuilder<List<FoodOrder>>(
             stream: _orders,
             builder: (context, snapshot) {
-              // Al reintentar, el snapshot conserva el error anterior hasta que
-              // llega el primer evento; se muestra la carga mientras tanto.
+              // Mientras reintenta, el snapshot trae el error anterior.
               if (snapshot.connectionState == ConnectionState.waiting) {
                 return const Center(child: CircularProgressIndicator());
               }

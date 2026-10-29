@@ -32,10 +32,8 @@ class SessionProvider extends ChangeNotifier {
   bool get isLoggedIn => _user != null;
   bool get isRestaurant => _user?.isRestaurant ?? false;
 
-  /// `true` mientras hay un inicio de sesión o registro en curso.
   bool get isBusy => _busy;
 
-  /// Último error de autenticación, listo para mostrar al usuario.
   String? get authError => _authError;
 
   void _onAuthChanged(User? firebaseUser) {
@@ -48,8 +46,7 @@ class SessionProvider extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    // Durante login/registro la vista de autenticación muestra su propio
-    // indicador; así no se desmonta el formulario si algo falla.
+    // Durante login/registro no se cambia de pantalla para no perder el formulario.
     if (!_busy) {
       _loading = true;
       notifyListeners();
@@ -58,8 +55,7 @@ class SessionProvider extends ChangeNotifier {
       (appUser) {
         _profileMissing = appUser == null;
         if (appUser == null) {
-          // En el registro el perfil se escribe justo después de crear la
-          // cuenta en Auth; la ausencia momentánea es esperada.
+          // En el registro el perfil se escribe justo después; aún no existe.
           if (!_busy) _handleMissingProfile();
           return;
         }
@@ -69,8 +65,7 @@ class SessionProvider extends ChangeNotifier {
       },
       onError: (Object e) {
         debugPrint('Error al escuchar users/${firebaseUser.uid}: $e');
-        // Cerrar sesión a mitad del registro invalidaría el token con el que
-        // se está escribiendo el perfil; se reintenta al terminar.
+        // Cerrar sesión aquí invalidaría el token con el que se escribe el perfil.
         if (_busy) {
           _profileListenFailed = true;
           return;
@@ -91,13 +86,10 @@ class SessionProvider extends ChangeNotifier {
     _auth.signOut();
   }
 
-  /// Inicia sesión con correo y contraseña. Devuelve `true` si tuvo éxito;
-  /// si falla, el motivo queda en [authError].
+  /// Devuelve `true` si tuvo éxito; si no, el motivo queda en [authError].
   Future<bool> signIn({required String email, required String password}) =>
       _runAuthAction(() => _auth.signIn(email: email, password: password));
 
-  /// Crea la cuenta con el [role] elegido. Para restaurantes se requieren
-  /// [restaurantName] y [restaurantAddress].
   Future<bool> register({
     required String displayName,
     required String email,
@@ -133,7 +125,6 @@ class SessionProvider extends ChangeNotifier {
       _authError = e.message;
       return false;
     } on FirebaseException catch (e) {
-      // Errores de Firestore al guardar el perfil (reglas, red, etc.).
       _authError = _firestoreMessageFor(e.code);
       return false;
     } catch (e) {

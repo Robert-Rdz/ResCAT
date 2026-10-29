@@ -66,10 +66,6 @@ class _ClientHomeViewState extends State<ClientHomeView> {
   }
 }
 
-// -----------------------------------------------------------------------------
-// Paquetes disponibles
-// -----------------------------------------------------------------------------
-
 class _AvailablePackagesTab extends StatefulWidget {
   const _AvailablePackagesTab({required this.user, required this.onReserved});
 
@@ -172,9 +168,7 @@ class _AvailablePackagesTabState extends State<_AvailablePackagesTab> {
   }
 }
 
-/// Confirmación del apartado con selector de cantidad. Devuelve la cantidad
-/// elegida, o `null` si el cliente cancela. Las existencias mostradas pueden
-/// estar desfasadas; [FirestoreService.reservePackage] las vuelve a comprobar.
+/// Devuelve la cantidad elegida o `null`. reservePackage vuelve a validar existencias.
 class _ReserveDialog extends StatefulWidget {
   const _ReserveDialog({required this.package});
 
@@ -310,10 +304,6 @@ class _PinText extends StatelessWidget {
   }
 }
 
-// -----------------------------------------------------------------------------
-// Mis apartados
-// -----------------------------------------------------------------------------
-
 class _MyOrdersTab extends StatefulWidget {
   const _MyOrdersTab({required this.user});
 
@@ -329,11 +319,9 @@ class _MyOrdersTabState extends State<_MyOrdersTab> {
       _firestore.watchUserOrders(widget.user.uid).map(_notifyDeliveries);
   final Set<String> _cancelling = {};
 
-  /// Último estado conocido de cada apartado; `null` hasta el primer evento.
   Map<String, OrderStatus>? _lastStatus;
 
-  /// Avisa al cliente cuando el restaurante valida su PIN. La pestaña vive en
-  /// un IndexedStack, así que el aviso llega aunque esté en "Disponibles".
+  /// Avisa cuando el restaurante valida el PIN.
   List<FoodOrder> _notifyDeliveries(List<FoodOrder> orders) {
     final previous = _lastStatus;
     _lastStatus = {for (final o in orders) o.id: o.status};

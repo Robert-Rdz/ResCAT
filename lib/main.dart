@@ -12,7 +12,6 @@ import 'firebase_options.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Inicializamos usando las opciones autogeneradas por flutterfire_cli
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );

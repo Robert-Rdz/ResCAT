@@ -1,6 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-/// Estado del apartado.
 enum OrderStatus {
   apartado,
   entregado,
@@ -12,24 +11,19 @@ enum OrderStatus {
       );
 }
 
-/// Apartado de un paquete por parte de un cliente. Documento: `orders/{id}`.
-///
-/// El cliente muestra [pin] en el restaurante; el restaurante lo captura y,
-/// si coincide con un apartado activo suyo, la orden pasa a [OrderStatus.entregado].
+/// Documento `orders/{id}`.
 class FoodOrder {
   final String id;
   final String userId;
   final String restaurantId;
   final String packageId;
 
-  /// Desnormalizados para mostrar el historial sin lecturas extra.
   final String packageName;
   final String restaurantName;
   final int quantity;
   final double unitPrice;
 
-  /// PIN de 4 dígitos ("0000"-"9999"), único entre los apartados activos
-  /// del mismo restaurante.
+  /// 4 dígitos, único entre los apartados activos del restaurante.
   final String pin;
   final OrderStatus status;
   final DateTime createdAt;

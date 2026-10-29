@@ -1,6 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-/// Rol de la cuenta dentro de la app.
 enum UserRole {
   cliente,
   restaurante;
@@ -11,10 +10,7 @@ enum UserRole {
       );
 }
 
-/// Cuenta autenticada. Documento: `users/{uid}`.
-///
-/// Si [role] es [UserRole.restaurante], [restaurantId] apunta al documento
-/// `restaurants/{restaurantId}` que administra esta cuenta.
+/// Documento `users/{uid}`.
 class AppUser {
   final String uid;
   final String email;

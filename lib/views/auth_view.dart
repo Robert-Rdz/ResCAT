@@ -6,24 +6,8 @@ import '../providers/session_provider.dart';
 
 enum _AuthMode { login, register }
 
-/// Inicio de sesión y registro con correo y contraseña.
-///
-/// En modo registro se elige el perfil (Cliente o Restaurante); para
-/// restaurantes se piden además los datos del local, que se guardan en
-/// `restaurants/{id}` junto con el perfil del usuario.
-///
-/// No navega por sí misma: al autenticarse, [SessionProvider] notifica y
-/// `HomeView` cambia a la pantalla que corresponde al rol del usuario.
-///
-/// Notas sobre el manejo de foco (relevantes sobre todo en Flutter web):
-/// - Controladores y [FocusNode]s viven en el `State`: sobreviven a cualquier
-///   rebuild y no se recrean al cambiar de modo o de perfil.
-/// - Cada campo tiene una [ValueKey] estable, así que al insertar o quitar
-///   campos condicionales los existentes conservan su estado y su `<input>`.
-/// - El avance con "Siguiente" usa [_fieldOrder] en lugar del recorrido
-///   implícito, para no caer en el botón de mostrar contraseña.
-/// - Mientras hay una petición en curso los campos pasan a `readOnly` en vez
-///   de deshabilitarse, para no forzar un blur del campo enfocado.
+/// Login y registro. En web los campos usan keys estables y pasan a `readOnly`
+/// (no deshabilitados) para no perder el foco.
 class AuthView extends StatefulWidget {
   const AuthView({super.key});
 
@@ -32,8 +16,7 @@ class AuthView extends StatefulWidget {
 }
 
 class _AuthViewState extends State<AuthView> {
-  // Se reemplaza al cambiar de modo para limpiar los errores de validación
-  // sin borrar el texto (FormState.reset() vaciaría los controladores).
+  // Nueva key para limpiar errores sin borrar el texto.
   GlobalKey<FormState> _formKey = GlobalKey<FormState>();
 
   final _nameController = TextEditingController();
@@ -57,8 +40,7 @@ class _AuthViewState extends State<AuthView> {
   final _visibilityToggleFocus =
       FocusNode(debugLabel: 'auth-visibility', skipTraversal: true);
 
-  // Listas constantes: una lista nueva en cada build puede reconfigurar la
-  // conexión de entrada de texto (en web, el <input>) mientras se escribe.
+  // Constantes para no reconfigurar el <input> en web en cada build.
   static const _nameHints = [AutofillHints.name];
   static const _emailHints = [AutofillHints.email];
   static const _passwordHints = [AutofillHints.password];
@@ -73,7 +55,6 @@ class _AuthViewState extends State<AuthView> {
   bool get _isRegister => _mode == _AuthMode.register;
   bool get _isRestaurant => _isRegister && _role == UserRole.restaurante;
 
-  /// Campos visibles en orden de captura; fuente única para "Siguiente".
   List<FocusNode> get _fieldOrder => [
         if (_isRegister) _nameFocus,
         _emailFocus,
@@ -120,8 +101,7 @@ class _AuthViewState extends State<AuthView> {
   }
 
   void _setRole(UserRole role) {
-    // Si el campo enfocado desaparece (datos del restaurante), soltar el foco
-    // explícitamente evita que quede apuntando a un nodo desmontado.
+    // Evita que el foco quede en un campo que ya no existe.
     if (role == UserRole.cliente &&
         (_restaurantNameFocus.hasFocus || _restaurantAddressFocus.hasFocus)) {
       FocusManager.instance.primaryFocus?.unfocus();
@@ -166,13 +146,10 @@ class _AuthViewState extends State<AuthView> {
       );
     }
 
-    // Si falló, devolver el foco a la contraseña para reintentar directo.
     if (mounted && session.authError != null) {
       _passwordFocus.requestFocus();
     }
   }
-
-  // --- Validadores -----------------------------------------------------------
 
   static String? _required(String? value, String message) =>
       (value?.trim().isEmpty ?? true) ? message : null;
@@ -197,8 +174,6 @@ class _AuthViewState extends State<AuthView> {
   String? _validateConfirm(String? value) =>
       value != _passwordController.text ? 'Las contraseñas no coinciden.' : null;
 
-  // --- UI --------------------------------------------------------------------
-
   @override
   Widget build(BuildContext context) {
     final session = context.watch<SessionProvider>();
@@ -213,7 +188,6 @@ class _AuthViewState extends State<AuthView> {
           border: const OutlineInputBorder(),
         );
 
-    // Campo de texto con clave, foco y acción de teclado consistentes.
     Widget field({
       required String id,
       required TextEditingController controller,
@@ -291,7 +265,7 @@ class _AuthViewState extends State<AuthView> {
                       ),
                       const SizedBox(height: 24),
 
-                      // --- Solo registro: perfil y nombre -------------------
+                      // Solo registro
                       if (_isRegister) ...[
                         Text('¿Cómo usarás ResCAT?',
                             style: theme.textTheme.titleSmall),
@@ -339,7 +313,6 @@ class _AuthViewState extends State<AuthView> {
                         const SizedBox(height: 16),
                       ],
 
-                      // --- Credenciales -------------------------------------
                       field(
                         id: 'email',
                         controller: _emailController,
@@ -378,7 +351,7 @@ class _AuthViewState extends State<AuthView> {
                         validator: _validatePassword,
                       ),
 
-                      // --- Solo registro: confirmación, teléfono, local -----
+                      // Solo registro
                       if (_isRegister) ...[
                         const SizedBox(height: 16),
                         field(

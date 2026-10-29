@@ -2,9 +2,8 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../models/app_user.dart';
 
-/// Guarda de forma cifrada (Keychain / Keystore) el uid y el rol de la última
-/// sesión, para enrutar al abrir la app sin esperar a Firestore (RNF4).
-/// Firebase Auth administra y renueva sus propios tokens; no se duplican aquí.
+/// Guarda cifrados el uid y el rol de la última sesión para abrir la app
+/// sin esperar a Firestore.
 class SecureStorageService {
   SecureStorageService([FlutterSecureStorage? storage])
       : _storage = storage ?? const FlutterSecureStorage();

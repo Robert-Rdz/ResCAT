@@ -5,8 +5,7 @@ import 'package:sqflite/sqflite.dart';
 
 import '../models/food_package.dart';
 
-/// Base local SQLite (RNF4). Solo caché y borradores: la disponibilidad real
-/// de una oferta siempre se decide en Firestore.
+/// Caché local en SQLite. La disponibilidad real la decide Firestore.
 class LocalDb {
   LocalDb._();
   static final LocalDb instancia = LocalDb._();
@@ -51,8 +50,6 @@ class LocalDb {
     );
   }
 
-  // ---------- ofertas_cache ----------
-
   /// Reemplaza la caché completa con la última lista recibida de Firestore.
   Future<void> guardarOfertas(List<FoodPackage> ofertas) async {
     final d = await db;
@@ -69,7 +66,6 @@ class LocalDb {
     });
   }
 
-  /// Ofertas en caché que siguen disponibles.
   Future<List<FoodPackage>> leerOfertas() async {
     final d = await db;
     final filas = await d.query('ofertas_cache');
@@ -79,8 +75,6 @@ class LocalDb {
         .where((o) => o.isAvailable)
         .toList();
   }
-
-  // ---------- reservas_locales ----------
 
   Future<void> guardarReserva({
     required String id,
@@ -112,8 +106,6 @@ class LocalDb {
     );
   }
 
-  // ---------- borradores_publicacion ----------
-
   Future<int> guardarBorrador(String rutaFoto, {String? jsonIA}) async {
     final d = await db;
     return d.insert('borradores_publicacion', {
@@ -128,7 +120,6 @@ class LocalDb {
     await d.delete('borradores_publicacion', where: 'id = ?', whereArgs: [id]);
   }
 
-  /// Al cerrar sesión se limpia todo lo local.
   Future<void> limpiar() async {
     final d = await db;
     await d.delete('ofertas_cache');

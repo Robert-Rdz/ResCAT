@@ -8,8 +8,7 @@ final _currency = NumberFormat.currency(locale: 'es_MX', symbol: r'$');
 
 String formatPrice(double value) => _currency.format(value);
 
-/// Tarjeta de un paquete de comida, compartida por los paneles de cliente y
-/// restaurante. [action] se muestra en la esquina inferior derecha.
+/// Tarjeta de paquete para cliente y restaurante.
 class PackageCard extends StatelessWidget {
   const PackageCard({
     super.key,
@@ -155,7 +154,6 @@ class _PhotoPlaceholder extends StatelessWidget {
   }
 }
 
-/// Estado vacío / error reutilizable para las listas.
 class EmptyState extends StatelessWidget {
   const EmptyState(
       {super.key, required this.icon, required this.message, this.action});
@@ -163,7 +161,6 @@ class EmptyState extends StatelessWidget {
   final IconData icon;
   final String message;
 
-  /// Botón opcional debajo del mensaje, p. ej. para reintentar.
   final Widget? action;
 
   @override

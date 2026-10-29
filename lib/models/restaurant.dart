@@ -1,6 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-/// Perfil público de un restaurante. Documento: `restaurants/{id}`.
+/// Documento `restaurants/{id}`.
 class Restaurant {
   final String id;
   final String ownerUid;

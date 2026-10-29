@@ -1,14 +1,10 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-/// Paquete de comida publicado por un restaurante. Documento: `packages/{id}`.
-///
-/// Se guarda en una colección de nivel superior (no como subcolección del
-/// restaurante) para poder consultar el feed de todos los paquetes activos.
+/// Documento `packages/{id}`.
 class FoodPackage {
   final String id;
   final String restaurantId;
 
-  /// Desnormalizado para pintar el feed sin leer cada restaurante.
   final String restaurantName;
   final String name;
   final String description;
@@ -39,7 +35,6 @@ class FoodPackage {
 
   bool get isAvailable => isActive && availableQuantity > 0;
 
-  /// Porcentaje de descuento entero (0-100).
   int get discountPercent => originalPrice <= 0
       ? 0
       : (((originalPrice - discountedPrice) / originalPrice) * 100).round();
@@ -78,7 +73,7 @@ class FoodPackage {
         'createdAt': Timestamp.fromDate(createdAt),
       };
 
-  /// Versión serializable para la caché de SQLite (sin tipos de Firestore).
+  /// Para la caché de SQLite.
   Map<String, dynamic> toCacheJson() => {
         'id': id,
         'restaurantId': restaurantId,

@@ -27,8 +27,7 @@ class _RestaurantHomeViewState extends State<RestaurantHomeView> {
       _firestore.getRestaurant(widget.restaurantId);
   int _tab = 0;
 
-  /// Un stream de Firestore se cierra tras un error; para reintentar hay que
-  /// crear la consulta de nuevo.
+  /// Tras un error el stream se cierra; reintentar crea la consulta de nuevo.
   void _retryPackages() => setState(() {
         _packages = _firestore.watchRestaurantPackages(widget.restaurantId);
       });
@@ -114,7 +113,6 @@ class _RestaurantHomeViewState extends State<RestaurantHomeView> {
               label: const Text('Publicar excedente'),
             )
           : null,
-      // IndexedStack conserva el scroll y la suscripción de cada pestaña.
       body: IndexedStack(
         index: _tab,
         children: [
@@ -145,14 +143,12 @@ class _RestaurantHomeViewState extends State<RestaurantHomeView> {
     return StreamBuilder<List<FoodPackage>>(
       stream: _packages,
       builder: (context, snapshot) {
-        // Al reintentar, el snapshot conserva el error anterior hasta que
-        // llega el primer evento; se muestra la carga mientras tanto.
+        // Mientras reintenta, el snapshot trae el error anterior.
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator());
         }
         if (snapshot.hasError) {
-          // El mensaje de failed-precondition incluye el enlace para crear
-          // el índice en la consola de Firebase.
+          // El mensaje trae el enlace para crear el índice.
           debugPrint('watchRestaurantPackages: ${snapshot.error}');
           return EmptyState(
             icon: Icons.cloud_off_outlined,
