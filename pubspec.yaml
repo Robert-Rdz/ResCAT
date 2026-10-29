@@ -1,0 +1,43 @@
+name: rescate_alimentos
+description: "Rescate de Alimentos (ResCAT): restaurantes publican paquetes con descuento, la IA describe el platillo y los clientes los apartan."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.5.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Firebase
+  firebase_core: ^4.1.0
+  firebase_auth: ^6.0.2
+  cloud_firestore: ^6.0.1
+  firebase_storage: ^13.0.1
+  firebase_messaging: ^16.0.0
+
+  # IA multimodal vía Firebase AI Logic
+  firebase_ai: ^4.0.0
+
+  # Persistencia local
+  flutter_secure_storage: ^11.0.0
+  sqflite: ^2.4.0
+  path: ^1.9.0
+
+  # Estado
+  provider: ^6.1.2
+
+  # UI / utilidades
+  cupertino_icons: ^1.0.8
+  cached_network_image: ^3.4.1
+  image_picker: ^1.1.2
+  intl: ^0.20.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
