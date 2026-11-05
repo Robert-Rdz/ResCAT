@@ -12,6 +12,11 @@ class FoodPackage {
   final double discountedPrice;
   final int availableQuantity;
   final String? photoUrl;
+  final List<String> allergens;
+  final String? category;
+
+  /// `alta`, `media` o `baja`, según el análisis de IA.
+  final String? perishability;
   final bool isActive;
   final DateTime? pickupStart;
   final DateTime? pickupEnd;
@@ -28,6 +33,9 @@ class FoodPackage {
     required this.availableQuantity,
     required this.createdAt,
     this.photoUrl,
+    this.allergens = const [],
+    this.category,
+    this.perishability,
     this.isActive = true,
     this.pickupStart,
     this.pickupEnd,
@@ -51,6 +59,9 @@ class FoodPackage {
       discountedPrice: (data['discountedPrice'] as num?)?.toDouble() ?? 0,
       availableQuantity: (data['availableQuantity'] as num?)?.toInt() ?? 0,
       photoUrl: data['photoUrl'] as String?,
+      allergens: List<String>.from(data['allergens'] as List? ?? const []),
+      category: data['category'] as String?,
+      perishability: data['perishability'] as String?,
       isActive: data['isActive'] as bool? ?? false,
       pickupStart: (data['pickupStart'] as Timestamp?)?.toDate(),
       pickupEnd: (data['pickupEnd'] as Timestamp?)?.toDate(),
@@ -67,6 +78,9 @@ class FoodPackage {
         'discountedPrice': discountedPrice,
         'availableQuantity': availableQuantity,
         'photoUrl': photoUrl,
+        'allergens': allergens,
+        'category': category,
+        'perishability': perishability,
         'isActive': isActive,
         'pickupStart': pickupStart == null ? null : Timestamp.fromDate(pickupStart!),
         'pickupEnd': pickupEnd == null ? null : Timestamp.fromDate(pickupEnd!),
@@ -84,6 +98,9 @@ class FoodPackage {
         'discountedPrice': discountedPrice,
         'availableQuantity': availableQuantity,
         'photoUrl': photoUrl,
+        'allergens': allergens,
+        'category': category,
+        'perishability': perishability,
         'isActive': isActive,
         'pickupStart': pickupStart?.millisecondsSinceEpoch,
         'pickupEnd': pickupEnd?.millisecondsSinceEpoch,
@@ -103,6 +120,9 @@ class FoodPackage {
       discountedPrice: (j['discountedPrice'] as num).toDouble(),
       availableQuantity: j['availableQuantity'] as int,
       photoUrl: j['photoUrl'] as String?,
+      allergens: List<String>.from(j['allergens'] as List? ?? const []),
+      category: j['category'] as String?,
+      perishability: j['perishability'] as String?,
       isActive: j['isActive'] as bool,
       pickupStart: fecha(j['pickupStart']),
       pickupEnd: fecha(j['pickupEnd']),

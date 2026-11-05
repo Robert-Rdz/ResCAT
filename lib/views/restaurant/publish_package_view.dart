@@ -3,7 +3,9 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
+import '../../models/analisis_ia.dart';
 import '../../services/firestore_service.dart';
+import '../../services/gemini_service.dart';
 import '../../services/storage_service.dart';
 import '../widgets/package_card.dart';
 
@@ -30,6 +32,25 @@ class _PublishPackageViewState extends State<PublishPackageView> {
   bool _saving = false;
   String? _error;
 
+  // Análisis de IA.
+  bool _analyzing = false;
+  AnalisisIA? _analysis;
+  String? _analysisError;
+
+  /// Texto que Gemini va escribiendo mientras llega la respuesta.
+  String _streamTitle = '';
+  String _streamDescription = '';
+
+  /// Gemini estaba saturado y se está reintentando.
+  bool _retrying = false;
+
+  /// Descarta respuestas de una foto que ya se cambió o quitó.
+  int _analysisRequest = 0;
+
+  /// Últimos textos que puso la IA; si el usuario los editó, no se pisan.
+  String _aiName = '';
+  String _aiDescription = '';
+
   static final _priceFormatter =
       FilteringTextInputFormatter.allow(RegExp(r'^\d*[.,]?\d{0,2}'));
 
@@ -50,11 +71,39 @@ class _PublishPackageViewState extends State<PublishPackageView> {
   static double? _parsePrice(String text) =>
       double.tryParse(text.trim().replaceAll(',', '.'));
 
-  Future<void> _pickPhoto() async {
+  bool get _usableAnalysis => _analysis?.esComida ?? false;
+
+  Future<void> _choosePhotoSource() async {
+    final source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.photo_camera_outlined),
+              title: const Text('Tomar foto'),
+              onTap: () => Navigator.pop(context, ImageSource.camera),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('Elegir de la galería'),
+              onTap: () => Navigator.pop(context, ImageSource.gallery),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (source != null) await _pickPhoto(source);
+  }
+
+  Future<void> _pickPhoto(ImageSource source) async {
     try {
       final file = await ImagePicker().pickImage(
-        source: ImageSource.gallery,
-        maxWidth: 1280,
+        source: source,
+        // GeminiService espera la imagen ya reducida.
+        maxWidth: 1024,
         imageQuality: 80,
       );
       if (file == null) return;
@@ -63,10 +112,95 @@ class _PublishPackageViewState extends State<PublishPackageView> {
       setState(() {
         _photoBytes = bytes;
         _photoContentType = file.mimeType ?? 'image/jpeg';
+        _error = null;
       });
+      await _analyze();
     } catch (_) {
       if (mounted) setState(() => _error = 'No se pudo cargar la foto.');
     }
+  }
+
+  void _removePhoto() {
+    setState(() {
+      _photoBytes = null;
+      _analysisRequest++;
+      _analyzing = false;
+      _analysis = null;
+      _analysisError = null;
+    });
+  }
+
+  Future<void> _analyze() async {
+    final bytes = _photoBytes;
+    if (bytes == null) return;
+    final request = ++_analysisRequest;
+    setState(() {
+      _analyzing = true;
+      _analysis = null;
+      _analysisError = null;
+      _streamTitle = '';
+      _streamDescription = '';
+      _retrying = false;
+    });
+
+    try {
+      final result = await context.read<GeminiService>().analizarPlatillo(
+        bytes,
+        onReintento: () {
+          if (!mounted || request != _analysisRequest) return;
+          setState(() {
+            _retrying = true;
+            _streamTitle = '';
+            _streamDescription = '';
+          });
+        },
+        onAvance: (title, description) {
+          if (!mounted || request != _analysisRequest) return;
+          if (title == _streamTitle && description == _streamDescription) {
+            return;
+          }
+          setState(() {
+            _streamTitle = title;
+            _streamDescription = description;
+          });
+        },
+      );
+      if (!mounted || request != _analysisRequest) return;
+      setState(() {
+        _analysis = result;
+        if (result.esComida) _applyAnalysis(result);
+      });
+    } on AnalisisException catch (e) {
+      if (mounted && request == _analysisRequest) {
+        setState(() => _analysisError = e.mensaje);
+      }
+    } finally {
+      if (mounted && request == _analysisRequest) {
+        setState(() => _analyzing = false);
+      }
+    }
+  }
+
+  /// Llena nombre y descripción solo si están vacíos o siguen como los dejó
+  /// la IA en un análisis anterior.
+  void _applyAnalysis(AnalisisIA a) {
+    final name = _nameController.text.trim();
+    if (a.titulo.isNotEmpty && (name.isEmpty || name == _aiName)) {
+      _nameController.text = a.titulo;
+      _aiName = a.titulo;
+    }
+    final description = _descriptionController.text.trim();
+    if (a.descripcion.isNotEmpty &&
+        (description.isEmpty || description == _aiDescription)) {
+      _descriptionController.text = a.descripcion;
+      _aiDescription = a.descripcion;
+    }
+  }
+
+  void _useSuggestedPrice(double price) {
+    setState(() {
+      _discountedPriceController.text = price.toStringAsFixed(0);
+    });
   }
 
   Future<void> _submit() async {
@@ -80,6 +214,7 @@ class _PublishPackageViewState extends State<PublishPackageView> {
     });
     final firestore = context.read<FirestoreService>();
     final storage = context.read<StorageService>();
+    final analysis = _usableAnalysis ? _analysis : null;
 
     try {
       String? photoUrl;
@@ -98,6 +233,11 @@ class _PublishPackageViewState extends State<PublishPackageView> {
         discountedPrice: _parsePrice(_discountedPriceController.text)!,
         availableQuantity: int.parse(_quantityController.text),
         photoUrl: photoUrl,
+        allergens: analysis?.alergenos ?? const [],
+        category: analysis == null || analysis.categoria.isEmpty
+            ? null
+            : analysis.categoria,
+        perishability: analysis?.perecibilidad.name,
       );
       if (mounted) Navigator.of(context).pop(true);
     } on RescueException catch (e) {
@@ -136,6 +276,16 @@ class _PublishPackageViewState extends State<PublishPackageView> {
     final showDiscount =
         original != null && discounted != null && discounted < original;
 
+    final perishability = _usableAnalysis ? _analysis!.perecibilidad : null;
+    final suggested =
+        original == null ? null : perishability?.precioSugerido(original);
+
+    final aiHelper = _usableAnalysis
+        ? (_analysis!.requiereRevision
+            ? 'Sugerido por IA con poca confianza: revísalo'
+            : 'Sugerido por IA')
+        : null;
+
     return Scaffold(
       appBar: AppBar(title: const Text('Publicar excedente')),
       body: SafeArea(
@@ -149,25 +299,42 @@ class _PublishPackageViewState extends State<PublishPackageView> {
                 children: [
                   _PhotoPicker(
                     bytes: _photoBytes,
-                    onPick: _saving ? null : _pickPhoto,
+                    onPick: _saving ? null : _choosePhotoSource,
                     onRemove: _saving || _photoBytes == null
                         ? null
-                        : () => setState(() => _photoBytes = null),
+                        : _removePhoto,
                   ),
+                  if (_photoBytes != null) ...[
+                    const SizedBox(height: 12),
+                    _AnalysisPanel(
+                      analyzing: _analyzing,
+                      retrying: _retrying,
+                      streamTitle: _streamTitle,
+                      streamDescription: _streamDescription,
+                      analysis: _analysis,
+                      error: _analysisError,
+                      onRetry: _saving ? null : _analyze,
+                    ),
+                  ],
                   const SizedBox(height: 20),
                   TextFormField(
                     controller: _nameController,
                     readOnly: _saving,
                     textCapitalization: TextCapitalization.sentences,
                     textInputAction: TextInputAction.next,
-                    decoration: const InputDecoration(
+                    decoration: InputDecoration(
                       labelText: 'Nombre del paquete',
                       hintText: 'Bolsa sorpresa de panadería',
-                      border: OutlineInputBorder(),
+                      helperText: _nameController.text == _aiName &&
+                              _aiName.isNotEmpty
+                          ? aiHelper
+                          : null,
+                      border: const OutlineInputBorder(),
                     ),
                     validator: (v) => (v?.trim().isEmpty ?? true)
                         ? 'Ingresa un nombre.'
                         : null,
+                    onChanged: (_) => setState(() {}),
                   ),
                   const SizedBox(height: 16),
                   TextFormField(
@@ -176,11 +343,17 @@ class _PublishPackageViewState extends State<PublishPackageView> {
                     textCapitalization: TextCapitalization.sentences,
                     minLines: 2,
                     maxLines: 4,
-                    decoration: const InputDecoration(
+                    decoration: InputDecoration(
                       labelText: 'Descripción',
                       hintText: '¿Qué puede incluir? Alérgenos, porciones…',
-                      border: OutlineInputBorder(),
+                      helperText: _descriptionController.text ==
+                                  _aiDescription &&
+                              _aiDescription.isNotEmpty
+                          ? aiHelper
+                          : null,
+                      border: const OutlineInputBorder(),
                     ),
+                    onChanged: (_) => setState(() {}),
                   ),
                   const SizedBox(height: 16),
                   Row(
@@ -223,6 +396,22 @@ class _PublishPackageViewState extends State<PublishPackageView> {
                       ),
                     ],
                   ),
+                  if (suggested != null && suggested != discounted) ...[
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: ActionChip(
+                        avatar: const Icon(Icons.auto_awesome, size: 18),
+                        label: Text(
+                          'Usar precio sugerido: ${formatPrice(suggested)} '
+                          '(-${(perishability!.descuentoSugerido * 100).round()}%, '
+                          'perecibilidad ${perishability.etiqueta.toLowerCase()})',
+                        ),
+                        onPressed:
+                            _saving ? null : () => _useSuggestedPrice(suggested),
+                      ),
+                    ),
+                  ],
                   if (showDiscount) ...[
                     const SizedBox(height: 8),
                     Text(
@@ -284,6 +473,187 @@ class _PublishPackageViewState extends State<PublishPackageView> {
   }
 }
 
+/// Estado del análisis de la foto: cargando, error, no es comida o resultado.
+class _AnalysisPanel extends StatelessWidget {
+  const _AnalysisPanel({
+    required this.analyzing,
+    required this.retrying,
+    required this.streamTitle,
+    required this.streamDescription,
+    required this.analysis,
+    required this.error,
+    required this.onRetry,
+  });
+
+  final bool analyzing;
+  final bool retrying;
+  final String streamTitle;
+  final String streamDescription;
+  final AnalisisIA? analysis;
+  final String? error;
+  final VoidCallback? onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+
+    Widget body;
+    if (analyzing) {
+      body = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(streamTitle.isNotEmpty
+              ? 'La IA está escribiendo…'
+              : retrying
+                  ? 'La IA está tardando más de lo normal, reintentando…'
+                  : 'Analizando el platillo con IA…'),
+          const SizedBox(height: 8),
+          const LinearProgressIndicator(),
+          if (streamTitle.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text(streamTitle, style: theme.textTheme.titleSmall),
+          ],
+          if (streamDescription.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(streamDescription, style: theme.textTheme.bodySmall),
+          ],
+        ],
+      );
+    } else if (error != null) {
+      body = _Message(
+        icon: Icons.error_outline,
+        color: colors.error,
+        text: error!,
+        onRetry: onRetry,
+      );
+    } else if (analysis == null) {
+      return const SizedBox.shrink();
+    } else if (!analysis!.esComida) {
+      body = _Message(
+        icon: Icons.no_food_outlined,
+        color: colors.error,
+        text: 'La foto no parece mostrar comida. Toma otra o llena los datos '
+            'a mano.',
+        onRetry: onRetry,
+      );
+    } else {
+      final a = analysis!;
+      final lowConfidence = a.requiereRevision;
+      body = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.auto_awesome, size: 18, color: colors.primary),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text('Análisis de IA', style: theme.textTheme.titleSmall),
+              ),
+              Chip(
+                visualDensity: VisualDensity.compact,
+                backgroundColor:
+                    lowConfidence ? colors.errorContainer : null,
+                label: Text(
+                  'Confianza ${(a.confianza * 100).round()}%',
+                  style: TextStyle(
+                    color: lowConfidence ? colors.onErrorContainer : null,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (lowConfidence)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                'La IA no está segura. Revisa nombre, descripción y alérgenos.',
+                style: theme.textTheme.bodySmall?.copyWith(color: colors.error),
+              ),
+            ),
+          const SizedBox(height: 8),
+          _Field(
+            label: 'Categoría',
+            value: a.categoria.isEmpty ? '—' : a.categoria,
+          ),
+          _Field(label: 'Perecibilidad', value: a.perecibilidad.etiqueta),
+          if (a.ingredientes.isNotEmpty)
+            _Field(label: 'Ingredientes', value: a.ingredientes.join(', ')),
+          const SizedBox(height: 4),
+          Text('Alérgenos', style: theme.textTheme.labelMedium),
+          const SizedBox(height: 4),
+          a.alergenos.isEmpty
+              ? Text('Ninguno detectado', style: theme.textTheme.bodySmall)
+              : Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    for (final alergeno in a.alergenos)
+                      Chip(
+                        visualDensity: VisualDensity.compact,
+                        avatar: const Icon(Icons.warning_amber, size: 16),
+                        label: Text(alergeno),
+                      ),
+                  ],
+                ),
+        ],
+      );
+    }
+
+    return Card.outlined(
+      margin: EdgeInsets.zero,
+      child: Padding(padding: const EdgeInsets.all(12), child: body),
+    );
+  }
+}
+
+class _Message extends StatelessWidget {
+  const _Message({
+    required this.icon,
+    required this.color,
+    required this.text,
+    required this.onRetry,
+  });
+
+  final IconData icon;
+  final Color color;
+  final String text;
+  final VoidCallback? onRetry;
+
+  @override
+  Widget build(BuildContext context) => Row(
+        children: [
+          Icon(icon, color: color),
+          const SizedBox(width: 8),
+          Expanded(child: Text(text)),
+          TextButton(onPressed: onRetry, child: const Text('Reintentar')),
+        ],
+      );
+}
+
+class _Field extends StatelessWidget {
+  const _Field({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Text.rich(
+        TextSpan(
+          children: [
+            TextSpan(text: '$label: ', style: theme.textTheme.labelMedium),
+            TextSpan(text: value, style: theme.textTheme.bodyMedium),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _PhotoPicker extends StatelessWidget {
   const _PhotoPicker({
     required this.bytes,
@@ -313,7 +683,12 @@ class _PhotoPicker extends StatelessWidget {
                     Icon(Icons.add_a_photo_outlined,
                         size: 40, color: colors.onSurfaceVariant),
                     const SizedBox(height: 8),
-                    const Text('Agregar foto (opcional)'),
+                    const Text('Toma una foto y la IA llena los datos'),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Opcional',
+                      style: TextStyle(color: colors.onSurfaceVariant),
+                    ),
                   ],
                 )
               : Stack(

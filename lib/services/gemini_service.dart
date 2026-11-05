@@ -1,10 +1,17 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:firebase_ai/firebase_ai.dart';
+import 'package:flutter/foundation.dart';
 
 import '../models/analisis_ia.dart';
+
+/// Falla pasajera (Gemini saturado o colgado); vale la pena reintentar.
+/// [mensaje] es lo que ve el usuario si el reintento también falla.
+class _Reintentable implements Exception {
+  const _Reintentable(this.mensaje);
+  final String mensaje;
+}
 
 class AnalisisException implements Exception {
   const AnalisisException(this.mensaje);
@@ -25,13 +32,21 @@ class GeminiService {
                 temperature: 0.2,
                 responseMimeType: 'application/json',
                 responseSchema: esquemaRespuesta,
+                // Describir una foto no requiere razonar; así responde en
+                // pocos segundos. gemini-3.8-flash no acepta `minimal`.
+                thinkingConfig:
+                    ThinkingConfig.withThinkingLevel(ThinkingLevel.low),
               ),
             );
 
-  static const nombreModelo = 'gemini-2.5-flash';
+  // gemini-3.8-flash y 3.5-flash se quedaban colgados o daban 500
+  // "high demand" (2026-11-04); flash-lite responde en ~1 s.
+  static const nombreModelo = 'gemini-3.5-flash-lite';
 
-  /// RNF1 pide < 5 s; se deja margen para la red.
-  static const tiempoLimite = Duration(seconds: 8);
+  /// RNF1 pide < 5 s; se deja margen para redes móviles lentas.
+  /// Por intento; con el reintento el peor caso queda en ~31 s. Si un
+  /// intento se cuelga, empezar otro suele ser más rápido que esperarlo.
+  static const tiempoLimite = Duration(seconds: 15);
 
   final GenerativeModel _modelo;
 
@@ -52,7 +67,8 @@ Recibes la foto de un platillo recién preparado en un restaurante.
 No inventes marcas ni precios. Si no es comida, deja los textos vacíos.
 ''';
 
-  /// Contrato de la sección 1.3.
+  /// Contrato de la sección 1.3. Título y descripción van primero para que
+  /// el streaming los muestre cuanto antes.
   static final esquemaRespuesta = Schema.object(
     properties: {
       'esComida': Schema.boolean(),
@@ -64,33 +80,122 @@ No inventes marcas ni precios. Si no es comida, deja los textos vacíos.
       'categoria': Schema.string(),
       'perecibilidad': Schema.enumString(enumValues: ['alta', 'media', 'baja']),
     },
+    propertyOrdering: [
+      'esComida',
+      'titulo',
+      'descripcion',
+      'ingredientes',
+      'alergenos',
+      'categoria',
+      'perecibilidad',
+      'confianza',
+    ],
   );
 
   /// [jpeg] debe venir ya reducida (image_picker con maxWidth 1024, calidad 80).
-  Future<AnalisisIA> analizarPlatillo(Uint8List jpeg) async {
-    final GenerateContentResponse respuesta;
+  ///
+  /// La respuesta llega por streaming; [onAvance] recibe el título y la
+  /// descripción parciales conforme Gemini los va escribiendo.
+  ///
+  /// Si Gemini está saturado o no responde a tiempo, se reintenta una vez
+  /// tras [esperaReintento]; [onReintento] avisa a la pantalla antes.
+  Future<AnalisisIA> analizarPlatillo(
+    Uint8List jpeg, {
+    void Function(String titulo, String descripcion)? onAvance,
+    VoidCallback? onReintento,
+  }) async {
     try {
-      respuesta = await _modelo.generateContent([
+      return await _intentar(jpeg, onAvance);
+    } on _Reintentable {
+      onReintento?.call();
+      await Future<void>.delayed(esperaReintento);
+      try {
+        return await _intentar(jpeg, onAvance);
+      } on _Reintentable catch (e) {
+        throw AnalisisException(e.mensaje);
+      }
+    }
+  }
+
+  static const esperaReintento = Duration(seconds: 1);
+
+  /// Gemini no da código HTTP en la excepción; se reconoce por el mensaje.
+  @visibleForTesting
+  static bool esSaturacion(Object error) {
+    final m = error.toString().toLowerCase();
+    return m.contains('high demand') ||
+        m.contains('overloaded') ||
+        m.contains('unavailable') ||
+        m.contains('try again later');
+  }
+
+  Future<AnalisisIA> _intentar(
+    Uint8List jpeg,
+    void Function(String titulo, String descripcion)? onAvance,
+  ) async {
+    final texto = StringBuffer();
+    // `.timeout` no cancela el stream; esto evita que un intento abandonado
+    // siga escribiendo encima del reintento.
+    var abandonado = false;
+    try {
+      final flujo = _modelo.generateContentStream([
         Content.multi([
           TextPart('Analiza este platillo.'),
           InlineDataPart('image/jpeg', jpeg),
         ]),
-      ]).timeout(tiempoLimite);
+      ]);
+      await flujo.forEach((parte) {
+        if (abandonado) return;
+        texto.write(parte.text ?? '');
+        if (onAvance != null) {
+          final parcial = texto.toString();
+          onAvance(campoParcial(parcial, 'titulo'),
+              campoParcial(parcial, 'descripcion'));
+        }
+      }).timeout(tiempoLimite);
     } on TimeoutException {
-      throw const AnalisisException(
-          'El análisis tardó demasiado. Reintenta o captura los datos a mano.');
+      abandonado = true;
+      throw const _Reintentable(
+          'El análisis tardó demasiado. Reintenta o llena los datos a mano.');
     } catch (e) {
-      throw AnalisisException('No se pudo analizar la foto: $e');
+      // El usuario ve un mensaje genérico; el error real queda en el log.
+      debugPrint('Gemini falló: ${e.runtimeType}: $e');
+      if (esSaturacion(e)) {
+        throw const _Reintentable(
+            'El servicio de IA está saturado. Reintenta en unos segundos o '
+            'llena los datos a mano.');
+      }
+      throw const AnalisisException(
+          'No se pudo analizar la foto. Reintenta o llena los datos a mano.');
     }
 
-    final texto = respuesta.text;
-    if (texto == null || texto.isEmpty) {
+    if (texto.isEmpty) {
       throw const AnalisisException('La IA no devolvió resultado.');
     }
     try {
-      return AnalisisIA.fromJson(jsonDecode(texto) as Map<String, dynamic>);
+      return AnalisisIA.fromJson(
+          jsonDecode(texto.toString()) as Map<String, dynamic>);
     } on FormatException {
       throw const AnalisisException('La respuesta de la IA no es válida.');
     }
+  }
+
+  /// Extrae el valor (quizá incompleto) de un campo de texto de un JSON que
+  /// todavía se está recibiendo. Devuelve '' si el campo aún no aparece.
+  @visibleForTesting
+  static String campoParcial(String json, String campo) {
+    final m = RegExp('"$campo"' r'\s*:\s*"((?:[^"\\]|\\.)*)').firstMatch(json);
+    if (m == null) return '';
+    var crudo = m.group(1)!;
+    // Un escape cortado a la mitad (termina en \ o \u00) no se puede
+    // decodificar; se recorta hasta que sí.
+    for (var i = 0; i < 6 && crudo.isNotEmpty; i++) {
+      try {
+        return jsonDecode('"$crudo"') as String;
+      } on FormatException {
+        crudo = crudo.substring(0, crudo.length - 1);
+      }
+    }
+    return '';
   }
 }

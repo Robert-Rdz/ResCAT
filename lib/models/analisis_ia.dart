@@ -3,6 +3,28 @@ enum Perecibilidad {
   media,
   baja;
 
+  /// Lo más perecedero se rebaja más para que salga el mismo día.
+  double get descuentoSugerido => switch (this) {
+        Perecibilidad.alta => 0.6,
+        Perecibilidad.media => 0.5,
+        Perecibilidad.baja => 0.4,
+      };
+
+  String get etiqueta => switch (this) {
+        Perecibilidad.alta => 'Alta',
+        Perecibilidad.media => 'Media',
+        Perecibilidad.baja => 'Baja',
+      };
+
+  /// Precio de rescate redondeado al peso; `null` si no queda por debajo
+  /// del original.
+  double? precioSugerido(double precioOriginal) {
+    if (precioOriginal <= 0) return null;
+    final precio = (precioOriginal * (1 - descuentoSugerido)).roundToDouble();
+    if (precio <= 0 || precio >= precioOriginal) return null;
+    return precio;
+  }
+
   static Perecibilidad desdeTexto(String? valor) => Perecibilidad.values
       .firstWhere((p) => p.name == valor, orElse: () => Perecibilidad.media);
 }

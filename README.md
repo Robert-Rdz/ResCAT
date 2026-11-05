@@ -13,11 +13,11 @@ valida al recoger. Usa Firebase y Gemini.
 | 2.2 | Firebase | ✅ | `firebase.json`, `firestore.rules`, `storage.rules` |
 | 2.3 | SDK de IA | ✅ | `lib/services/gemini_service.dart` |
 | 3.1 | Auth clientes y restaurantes | ✅ | `lib/services/auth_service.dart`, `lib/providers/session_provider.dart` |
-| 3.2 | Análisis multimodal con IA | Servicio listo, falta conectarlo a la UI | `lib/services/gemini_service.dart` |
-| 3.3 | Precio recomendado y CRUD de ofertas | Parcial (sin precio sugerido ni edición) | `lib/services/firestore_service.dart` |
+| 3.2 | Análisis multimodal con IA | ✅ | `lib/services/gemini_service.dart`, `lib/views/restaurant/publish_package_view.dart` |
+| 3.3 | Precio recomendado y CRUD de ofertas | Parcial (falta edición) | `lib/services/firestore_service.dart` |
 | 3.4 | Cloud Functions + FCM | Pendiente | — |
 | 4.1 | UI registro/login y rol | ✅ | `lib/views/auth_view.dart` |
-| 4.2 | UI negocio: cámara, preview IA y precio | Parcial (solo galería) | `lib/views/restaurant/` |
+| 4.2 | UI negocio: cámara, preview IA y precio | ✅ | `lib/views/restaurant/` |
 | 4.3 | UI cliente: feed y detalle | Parcial (sin pantalla de detalle) | `lib/views/client/` |
 | 4.4 | UI reserva: generar y validar clave | ✅ | `lib/views/client/`, `lib/views/restaurant/deliveries_tab.dart` |
 
@@ -70,7 +70,9 @@ Android: en `android/app/build.gradle` subir `minSdk` a **23**.
 
 1. Consola de Firebase → **AI Logic** → *Get started* → **Gemini Developer API**.
    La API key queda en Firebase, no en el código.
-2. El modelo está en `GeminiService.nombreModelo` (`gemini-2.5-flash`).
+2. El modelo está en `GeminiService.nombreModelo` (`gemini-3.5-flash-lite`;
+   `gemini-3.8-flash` daba errores de saturación). La respuesta llega por
+   streaming y se reintenta una vez si Gemini está saturado o no responde.
 3. Antes de publicar la app: activar **App Check**.
 
 ## Verificar
