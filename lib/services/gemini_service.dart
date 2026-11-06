@@ -20,12 +20,16 @@ class AnalisisException implements Exception {
   String toString() => mensaje;
 }
 
-/// Analiza la foto del platillo con Gemini vía Firebase AI Logic; la API key
-/// queda en Firebase, no en la app.
+/// Analiza la foto del platillo con Gemini (Vertex AI) vía Firebase AI Logic;
+/// la API key queda en Firebase, no en la app.
 class GeminiService {
   GeminiService({GenerativeModel? modelo})
       : _modelo = modelo ??
-            FirebaseAI.googleAI().generativeModel(
+            // agentPlatform (antes Vertex AI) y no googleAI(): con Blaze, la
+            // API de Google AI pide saldo prepago en AI Studio; esta se cobra
+            // a la cuenta de Cloud. Su región por defecto es `global`, la
+            // única donde existe flash-lite (us-central1 da 404).
+            FirebaseAI.agentPlatform().generativeModel(
               model: nombreModelo,
               systemInstruction: Content.system(_instrucciones),
               generationConfig: GenerationConfig(

@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart' show GeoPoint;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 
@@ -25,13 +26,14 @@ class AuthService {
     UserRole role = UserRole.cliente,
     String? phone,
     String? restaurantName,
-    String? restaurantAddress,
+    RestaurantAddress? restaurantAddress,
+    GeoPoint? restaurantLocation,
   }) async {
     if (role == UserRole.restaurante &&
         ((restaurantName?.trim().isEmpty ?? true) ||
-            (restaurantAddress?.trim().isEmpty ?? true))) {
+            !(restaurantAddress?.isComplete ?? false))) {
       throw const RescueException(
-          'Indica el nombre y la dirección del restaurante.');
+          'Indica el nombre y la dirección completa del restaurante.');
     }
 
     final cred = await _auth.createUserWithEmailAndPassword(
@@ -52,6 +54,7 @@ class AuthService {
         phone: cleanPhone.isEmpty ? null : cleanPhone,
         restaurantName: restaurantName,
         restaurantAddress: restaurantAddress,
+        restaurantLocation: restaurantLocation,
       );
       // El perfil ya existe; un fallo aquí no debe deshacer el registro.
       try {

@@ -7,7 +7,9 @@ import '../../providers/session_provider.dart';
 import '../../services/firestore_service.dart';
 import '../widgets/package_card.dart';
 import 'deliveries_tab.dart';
+import 'edit_package_view.dart';
 import 'publish_package_view.dart';
+import 'restaurant_profile_view.dart';
 
 /// Panel del restaurante: sus paquetes publicados y la validación de entregas.
 class RestaurantHomeView extends StatefulWidget {
@@ -23,7 +25,7 @@ class _RestaurantHomeViewState extends State<RestaurantHomeView> {
   late final FirestoreService _firestore = context.read<FirestoreService>();
   late Stream<List<FoodPackage>> _packages =
       _firestore.watchRestaurantPackages(widget.restaurantId);
-  late final Future<Restaurant?> _restaurant =
+  late Future<Restaurant?> _restaurant =
       _firestore.getRestaurant(widget.restaurantId);
   int _tab = 0;
 
@@ -46,12 +48,47 @@ class _RestaurantHomeViewState extends State<RestaurantHomeView> {
   Future<void> _openPublish() async {
     final published = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
-        builder: (_) => PublishPackageView(restaurantId: widget.restaurantId),
+        builder: (_) => PublishPackageView(
+          restaurantId: widget.restaurantId,
+          openCameraOnStart: true,
+        ),
       ),
     );
     if (published == true && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Paquete publicado.')),
+      );
+    }
+  }
+
+  Future<void> _openProfile() async {
+    final restaurant = await _restaurant;
+    if (!mounted) return;
+    if (restaurant == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('No se pudieron cargar los datos del restaurante.')));
+      return;
+    }
+    final saved = await Navigator.of(context).push<bool>(MaterialPageRoute(
+      builder: (_) => RestaurantProfileView(restaurant: restaurant),
+    ));
+    if (saved == true && mounted) {
+      setState(() {
+        _restaurant = _firestore.getRestaurant(widget.restaurantId);
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Datos del restaurante guardados.')),
+      );
+    }
+  }
+
+  Future<void> _openEdit(FoodPackage package) async {
+    final saved = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(builder: (_) => EditPackageView(package: package)),
+    );
+    if (saved == true && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Cambios guardados.')),
       );
     }
   }
@@ -99,6 +136,11 @@ class _RestaurantHomeViewState extends State<RestaurantHomeView> {
               Text(snapshot.data?.name ?? 'Mi restaurante'),
         ),
         actions: [
+          IconButton(
+            tooltip: 'Datos del restaurante',
+            icon: const Icon(Icons.storefront_outlined),
+            onPressed: _openProfile,
+          ),
           IconButton(
             tooltip: 'Cerrar sesión',
             icon: const Icon(Icons.logout),
@@ -182,12 +224,17 @@ class _RestaurantHomeViewState extends State<RestaurantHomeView> {
               key: ValueKey(package.id),
               package: package,
               showRestaurant: false,
+              onTap: () => _openEdit(package),
               action: package.isActive
                   ? OutlinedButton(
                       onPressed: () => _withdraw(package),
                       child: const Text('Retirar'),
                     )
-                  : null,
+                  : OutlinedButton.icon(
+                      onPressed: () => _openEdit(package),
+                      icon: const Icon(Icons.edit_outlined, size: 18),
+                      label: const Text('Editar'),
+                    ),
             );
           },
         );

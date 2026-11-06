@@ -15,11 +15,18 @@ class PackageCard extends StatelessWidget {
     required this.package,
     this.action,
     this.showRestaurant = true,
+    this.onTap,
   });
 
   final FoodPackage package;
   final Widget? action;
   final bool showRestaurant;
+
+  /// Si se da, la tarjeta se puede tocar y la foto anima hacia el detalle.
+  final VoidCallback? onTap;
+
+  /// Tag compartido con la foto del detalle (Hero).
+  static String heroTag(FoodPackage package) => 'package-photo-${package.id}';
 
   @override
   Widget build(BuildContext context) {
@@ -30,114 +37,123 @@ class PackageCard extends StatelessWidget {
       opacity: package.isAvailable ? 1 : 0.6,
       child: Card(
         clipBehavior: Clip.antiAlias,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            AspectRatio(
-              aspectRatio: 16 / 9,
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  if (package.photoUrl != null)
-                    CachedNetworkImage(
-                      imageUrl: package.photoUrl!,
-                      fit: BoxFit.cover,
-                      placeholder: (_, __) =>
-                          ColoredBox(color: colors.surfaceContainerHighest),
-                      errorWidget: (_, __, ___) => const _PhotoPlaceholder(),
-                    )
-                  else
-                    const _PhotoPlaceholder(),
-                  if (package.discountPercent > 0)
-                    Positioned(
-                      top: 12,
-                      left: 12,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: colors.primary,
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: Text(
-                          '-${package.discountPercent}%',
-                          style: theme.textTheme.labelLarge?.copyWith(
-                            color: colors.onPrimary,
-                            fontWeight: FontWeight.bold,
+        child: InkWell(
+          onTap: onTap,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              AspectRatio(
+                aspectRatio: 16 / 9,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    _maybeHero(
+                      package.photoUrl != null
+                          ? CachedNetworkImage(
+                              imageUrl: package.photoUrl!,
+                              fit: BoxFit.cover,
+                              placeholder: (_, __) => ColoredBox(
+                                  color: colors.surfaceContainerHighest),
+                              errorWidget: (_, __, ___) =>
+                                  const _PhotoPlaceholder(),
+                            )
+                          : const _PhotoPlaceholder(),
+                    ),
+                    if (package.discountPercent > 0)
+                      Positioned(
+                        top: 12,
+                        left: 12,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: colors.primary,
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            '-${package.discountPercent}%',
+                            style: theme.textTheme.labelLarge?.copyWith(
+                              color: colors.onPrimary,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                ],
+                  ],
+                ),
               ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(package.name, style: theme.textTheme.titleMedium),
-                  if (showRestaurant) ...[
-                    const SizedBox(height: 2),
-                    Text(
-                      package.restaurantName,
-                      style: theme.textTheme.bodySmall
-                          ?.copyWith(color: colors.onSurfaceVariant),
-                    ),
-                  ],
-                  if (package.description.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      package.description,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodyMedium,
-                    ),
-                  ],
-                  const SizedBox(height: 12),
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              formatPrice(package.originalPrice),
-                              style: theme.textTheme.bodySmall?.copyWith(
-                                decoration: TextDecoration.lineThrough,
-                                color: colors.onSurfaceVariant,
-                              ),
-                            ),
-                            Text(
-                              formatPrice(package.discountedPrice),
-                              style: theme.textTheme.titleLarge?.copyWith(
-                                color: colors.primary,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            Text(
-                              package.isAvailable
-                                  ? 'Quedan ${package.availableQuantity}'
-                                  : package.availableQuantity == 0
-                                      ? 'Agotado'
-                                      : 'Retirado',
-                              style: theme.textTheme.bodySmall,
-                            ),
-                          ],
-                        ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(package.name, style: theme.textTheme.titleMedium),
+                    if (showRestaurant) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        package.restaurantName,
+                        style: theme.textTheme.bodySmall
+                            ?.copyWith(color: colors.onSurfaceVariant),
                       ),
-                      if (action != null) action!,
                     ],
-                  ),
-                ],
+                    if (package.description.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        package.description,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodyMedium,
+                      ),
+                    ],
+                    const SizedBox(height: 12),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                formatPrice(package.originalPrice),
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  decoration: TextDecoration.lineThrough,
+                                  color: colors.onSurfaceVariant,
+                                ),
+                              ),
+                              Text(
+                                formatPrice(package.discountedPrice),
+                                style: theme.textTheme.titleLarge?.copyWith(
+                                  color: colors.primary,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              Text(
+                                package.isAvailable
+                                    ? 'Quedan ${package.availableQuantity}'
+                                    : package.availableQuantity == 0
+                                        ? 'Agotado'
+                                        : 'Retirado',
+                                style: theme.textTheme.bodySmall,
+                              ),
+                            ],
+                          ),
+                        ),
+                        if (action != null) action!,
+                      ],
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
+
+  /// El restaurante también usa la tarjeta sin navegar; ahí no hace falta Hero.
+  Widget _maybeHero(Widget photo) =>
+      onTap == null ? photo : Hero(tag: heroTag(package), child: photo);
 }
 
 class _PhotoPlaceholder extends StatelessWidget {

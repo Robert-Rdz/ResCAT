@@ -8,6 +8,7 @@ import 'providers/session_provider.dart';
 import 'services/auth_service.dart';
 import 'services/firestore_service.dart';
 import 'services/gemini_service.dart';
+import 'services/local_db.dart';
 import 'services/storage_service.dart';
 import 'views/home_view.dart';
 import 'firebase_options.dart';
@@ -47,6 +48,7 @@ Future<void> main() async {
         Provider<AuthService>.value(value: auth),
         Provider<StorageService>(create: (_) => StorageService()),
         Provider<GeminiService>(create: (_) => GeminiService()),
+        Provider<LocalDb>.value(value: LocalDb.instancia),
         ChangeNotifierProvider(
           create: (_) => SessionProvider(auth: auth, firestore: firestore),
         ),

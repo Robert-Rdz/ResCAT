@@ -12,6 +12,15 @@ class RescueException implements Exception {
   String toString() => message;
 }
 
+/// La cantidad cambió (un cliente apartó) mientras el restaurante editaba.
+class QuantityChangedException extends RescueException {
+  const QuantityChangedException(this.currentQuantity)
+      : super('Un cliente apartó mientras editabas. Revisa la cantidad y '
+            'guarda de nuevo.');
+
+  final int currentQuantity;
+}
+
 /// `restaurants/{id}/activePins/{pin}` guarda los PIN en uso para que no se
 /// repitan y para validar un PIN con una sola lectura.
 class FirestoreService {
@@ -24,14 +33,17 @@ class FirestoreService {
 
   static const int _maxPinAttempts = 10;
 
-  CollectionReference<Map<String, dynamic>> get _users => _db.collection('users');
+  CollectionReference<Map<String, dynamic>> get _users =>
+      _db.collection('users');
   CollectionReference<Map<String, dynamic>> get _restaurants =>
       _db.collection('restaurants');
   CollectionReference<Map<String, dynamic>> get _packages =>
       _db.collection('packages');
-  CollectionReference<Map<String, dynamic>> get _orders => _db.collection('orders');
+  CollectionReference<Map<String, dynamic>> get _orders =>
+      _db.collection('orders');
 
-  DocumentReference<Map<String, dynamic>> _pinRef(String restaurantId, String pin) =>
+  DocumentReference<Map<String, dynamic>> _pinRef(
+          String restaurantId, String pin) =>
       _restaurants.doc(restaurantId).collection('activePins').doc(pin);
 
   Future<void> saveUser(AppUser user) =>
@@ -55,7 +67,8 @@ class FirestoreService {
     required UserRole role,
     String? phone,
     String? restaurantName,
-    String? restaurantAddress,
+    RestaurantAddress? restaurantAddress,
+    GeoPoint? restaurantLocation,
   }) async {
     final now = DateTime.now();
     final batch = _db.batch();
@@ -70,7 +83,9 @@ class FirestoreService {
           id: ref.id,
           ownerUid: uid,
           name: restaurantName!.trim(),
-          address: restaurantAddress!.trim(),
+          address: restaurantAddress!.full,
+          addressParts: restaurantAddress,
+          location: restaurantLocation,
           phone: phone,
           createdAt: now,
         ).toFirestore(),
@@ -104,6 +119,51 @@ class FirestoreService {
     return ref.id;
   }
 
+  /// Cambia nombre, dirección y ubicación del restaurante, y los copia a sus
+  /// paquetes publicados para que los clientes vean la dirección nueva.
+  /// Los apartados ya hechos conservan la dirección con la que se apartaron
+  /// (las reglas no dejan cambiarles esos campos).
+  Future<void> updateRestaurant({
+    required String restaurantId,
+    required String name,
+    required RestaurantAddress address,
+    GeoPoint? location,
+    String? phone,
+  }) async {
+    if (name.trim().isEmpty) {
+      throw const RescueException('Ingresa el nombre del restaurante.');
+    }
+    if (!address.isComplete) {
+      throw const RescueException('Completa calle y número, colonia y ciudad.');
+    }
+    final cleanPhone = phone?.trim() ?? '';
+    final shared = {
+      'name': name.trim(),
+      'address': address.full,
+      'addressParts': address.toMap(),
+      'location': location,
+    };
+
+    final active = await _packages
+        .where('restaurantId', isEqualTo: restaurantId)
+        .where('isActive', isEqualTo: true)
+        .get();
+
+    final batch = _db.batch()
+      ..update(_restaurants.doc(restaurantId), {
+        ...shared,
+        'phone': cleanPhone.isEmpty ? null : cleanPhone,
+      });
+    for (final doc in active.docs) {
+      batch.update(doc.reference, {
+        'restaurantName': shared['name'],
+        'restaurantAddress': shared['address'],
+        'restaurantLocation': location,
+      });
+    }
+    await batch.commit();
+  }
+
   Future<Restaurant?> getRestaurant(String restaurantId) async {
     final doc = await _restaurants.doc(restaurantId).get();
     return doc.exists ? Restaurant.fromFirestore(doc) : null;
@@ -117,22 +177,18 @@ class FirestoreService {
     required double discountedPrice,
     required int availableQuantity,
     String? photoUrl,
+    List<String> ingredients = const [],
     List<String> allergens = const [],
     String? category,
     String? perishability,
     DateTime? pickupStart,
     DateTime? pickupEnd,
   }) async {
-    if (name.trim().isEmpty) {
-      throw const RescueException('El paquete necesita un nombre.');
-    }
-    if (originalPrice <= 0 || discountedPrice < 0) {
-      throw const RescueException('Los precios no son válidos.');
-    }
-    if (discountedPrice >= originalPrice) {
-      throw const RescueException(
-          'El precio con descuento debe ser menor al precio original.');
-    }
+    _validatePackage(
+      name: name,
+      originalPrice: originalPrice,
+      discountedPrice: discountedPrice,
+    );
     if (availableQuantity <= 0) {
       throw const RescueException('La cantidad disponible debe ser mayor a 0.');
     }
@@ -147,12 +203,15 @@ class FirestoreService {
       id: ref.id,
       restaurantId: restaurantId,
       restaurantName: restaurant.name,
+      restaurantAddress: restaurant.address,
+      restaurantLocation: restaurant.location,
       name: name.trim(),
       description: description.trim(),
       originalPrice: originalPrice,
       discountedPrice: discountedPrice,
       availableQuantity: availableQuantity,
       photoUrl: photoUrl,
+      ingredients: ingredients,
       allergens: allergens,
       category: category,
       perishability: perishability,
@@ -162,6 +221,72 @@ class FirestoreService {
     );
     await ref.set(package.toFirestore());
     return ref.id;
+  }
+
+  static void _validatePackage({
+    required String name,
+    required double originalPrice,
+    required double discountedPrice,
+  }) {
+    if (name.trim().isEmpty) {
+      throw const RescueException('El paquete necesita un nombre.');
+    }
+    if (originalPrice <= 0 || discountedPrice < 0) {
+      throw const RescueException('Los precios no son válidos.');
+    }
+    if (discountedPrice >= originalPrice) {
+      throw const RescueException(
+          'El precio con descuento debe ser menor al precio original.');
+    }
+  }
+
+  /// Edita un paquete publicado. Los apartados ya hechos conservan su precio.
+  ///
+  /// [expectedQuantity] es la cantidad que el restaurante vio al abrir el
+  /// formulario: si un cliente apartó mientras tanto, se rechaza el cambio en
+  /// vez de pisar la reserva.
+  Future<void> updatePackage({
+    required String packageId,
+    required String name,
+    required String description,
+    required double originalPrice,
+    required double discountedPrice,
+    required int availableQuantity,
+    required int expectedQuantity,
+    required bool isActive,
+  }) async {
+    _validatePackage(
+      name: name,
+      originalPrice: originalPrice,
+      discountedPrice: discountedPrice,
+    );
+    if (availableQuantity < 0) {
+      throw const RescueException('La cantidad no puede ser negativa.');
+    }
+    if (isActive && availableQuantity == 0) {
+      throw const RescueException(
+          'Para mostrarlo a los clientes la cantidad debe ser mayor a 0.');
+    }
+
+    final ref = _packages.doc(packageId);
+    await _db.runTransaction<void>((tx) async {
+      final snap = await tx.get(ref);
+      if (!snap.exists) {
+        throw const RescueException('El paquete ya no existe.');
+      }
+      final current = FoodPackage.fromFirestore(snap);
+      if (current.availableQuantity != expectedQuantity) {
+        throw QuantityChangedException(current.availableQuantity);
+      }
+      tx.update(ref, {
+        'name': name.trim(),
+        'description': description.trim(),
+        'originalPrice': originalPrice,
+        'discountedPrice': discountedPrice,
+        'availableQuantity': availableQuantity,
+        'isActive': isActive,
+      });
+    });
   }
 
   Future<void> deactivatePackage(String packageId) =>
@@ -177,11 +302,12 @@ class FirestoreService {
       .map((s) => s.docs.map(FoodPackage.fromFirestore).toList());
 
   /// Requiere índice (restaurantId, createdAt desc).
-  Stream<List<FoodPackage>> watchRestaurantPackages(String restaurantId) => _packages
-      .where('restaurantId', isEqualTo: restaurantId)
-      .orderBy('createdAt', descending: true)
-      .snapshots()
-      .map((s) => s.docs.map(FoodPackage.fromFirestore).toList());
+  Stream<List<FoodPackage>> watchRestaurantPackages(String restaurantId) =>
+      _packages
+          .where('restaurantId', isEqualTo: restaurantId)
+          .orderBy('createdAt', descending: true)
+          .snapshots()
+          .map((s) => s.docs.map(FoodPackage.fromFirestore).toList());
 
   /// En transacción para no apartar más de lo que hay ni repetir PIN.
   Future<FoodOrder> reservePackage({
@@ -219,6 +345,8 @@ class FirestoreService {
         packageId: package.id,
         packageName: package.name,
         restaurantName: package.restaurantName,
+        restaurantAddress: package.restaurantAddress,
+        restaurantLocation: package.restaurantLocation,
         quantity: quantity,
         unitPrice: package.discountedPrice,
         pin: pin,
@@ -337,6 +465,8 @@ class FirestoreService {
         packageId: order.packageId,
         packageName: order.packageName,
         restaurantName: order.restaurantName,
+        restaurantAddress: order.restaurantAddress,
+        restaurantLocation: order.restaurantLocation,
         quantity: order.quantity,
         unitPrice: order.unitPrice,
         pin: order.pin,
@@ -347,10 +477,11 @@ class FirestoreService {
     });
   }
 
-  Stream<List<FoodOrder>> watchRestaurantActiveOrders(String restaurantId) => _orders
-      .where('restaurantId', isEqualTo: restaurantId)
-      .where('status', isEqualTo: OrderStatus.apartado.name)
-      .orderBy('createdAt')
-      .snapshots()
-      .map((s) => s.docs.map(FoodOrder.fromFirestore).toList());
+  Stream<List<FoodOrder>> watchRestaurantActiveOrders(String restaurantId) =>
+      _orders
+          .where('restaurantId', isEqualTo: restaurantId)
+          .where('status', isEqualTo: OrderStatus.apartado.name)
+          .orderBy('createdAt')
+          .snapshots()
+          .map((s) => s.docs.map(FoodOrder.fromFirestore).toList());
 }

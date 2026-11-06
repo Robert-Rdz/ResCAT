@@ -1,19 +1,28 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../../models/analisis_ia.dart';
 import '../../services/firestore_service.dart';
 import '../../services/gemini_service.dart';
+import '../../services/local_db.dart';
 import '../../services/storage_service.dart';
 import '../widgets/package_card.dart';
 
 /// Devuelve `true` al cerrar si se publicó.
 class PublishPackageView extends StatefulWidget {
-  const PublishPackageView({super.key, required this.restaurantId});
+  const PublishPackageView({
+    super.key,
+    required this.restaurantId,
+    this.openCameraOnStart = false,
+  });
 
   final String restaurantId;
+
+  /// RNF3: el botón del panel abre la cámara directo para ahorrar un paso.
+  final bool openCameraOnStart;
 
   @override
   State<PublishPackageView> createState() => _PublishPackageViewState();
@@ -54,8 +63,120 @@ class _PublishPackageViewState extends State<PublishPackageView> {
   static final _priceFormatter =
       FilteringTextInputFormatter.allow(RegExp(r'^\d*[.,]?\d{0,2}'));
 
+  static final _draftDateFormat = DateFormat("dd/MM 'a las' HH:mm");
+
+  /// Publicación que falló antes y quedó guardada en SQLite.
+  BorradorPublicacion? _draft;
+
+  /// Tras la foto se enfoca el precio para que el teclado salga solo.
+  final _originalPriceFocus = FocusNode();
+
+  /// Último precio de rescate que puso la app; si el usuario lo cambió a
+  /// mano, ya no se recalcula.
+  String _autoDiscount = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _start();
+  }
+
+  Future<void> _start() async {
+    await _loadDraft();
+    // Con un borrador pendiente primero se ofrece recuperarlo.
+    if (mounted && widget.openCameraOnStart && _draft == null) {
+      await _pickPhoto(ImageSource.camera);
+    }
+  }
+
+  Future<void> _loadDraft() async {
+    try {
+      final draft =
+          await context.read<LocalDb>().leerBorrador(widget.restaurantId);
+      if (mounted && draft != null) setState(() => _draft = draft);
+    } catch (e) {
+      debugPrint('leerBorrador: $e');
+    }
+  }
+
+  /// Al volver de la cámara Android tarda un momento en reactivar la app; si
+  /// se enfoca antes, el teclado no aparece.
+  Future<void> _focusPrice() async {
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    if (!mounted || _originalPriceController.text.isNotEmpty) return;
+    _originalPriceFocus.requestFocus();
+    // Si el campo ya tenía el foco, requestFocus no vuelve a abrir el teclado.
+    await SystemChannels.textInput.invokeMethod<void>('TextInput.show');
+  }
+
+  /// Pone el precio sugerido mientras el usuario no haya escrito otro.
+  void _autoFillDiscount() {
+    if (!_usableAnalysis) return;
+    final original = _parsePrice(_originalPriceController.text);
+    final suggested = original == null
+        ? null
+        : _analysis!.perecibilidad.precioSugerido(original);
+    final current = _discountedPriceController.text;
+    if (current.isNotEmpty && current != _autoDiscount) return;
+    final text = suggested == null ? '' : suggested.toStringAsFixed(0);
+    _discountedPriceController.text = text;
+    _autoDiscount = text;
+  }
+
+  void _restoreDraft() {
+    final d = _draft!;
+    setState(() {
+      _nameController.text = d.nombre;
+      _descriptionController.text = d.descripcion;
+      _originalPriceController.text = d.precioOriginal;
+      _discountedPriceController.text = d.precioRescate;
+      _autoDiscount = '';
+      _quantityController.text = d.cantidad.isEmpty ? '1' : d.cantidad;
+      _photoBytes = d.foto;
+      _photoContentType = d.tipoFoto ?? 'image/jpeg';
+      _analysis = d.analisis;
+      _analysisError = null;
+      // Así un análisis nuevo puede reemplazar los textos que puso la IA.
+      _aiName = d.analisis?.titulo ?? '';
+      _aiDescription = d.analisis?.descripcion ?? '';
+      _draft = null;
+    });
+  }
+
+  Future<void> _discardDraft() async {
+    setState(() => _draft = null);
+    try {
+      await context.read<LocalDb>().borrarBorrador(widget.restaurantId);
+    } catch (e) {
+      debugPrint('borrarBorrador: $e');
+    }
+  }
+
+  /// Devuelve `true` si el borrador quedó guardado.
+  Future<bool> _saveDraft(LocalDb db) async {
+    try {
+      await db.guardarBorrador(BorradorPublicacion(
+        restaurantId: widget.restaurantId,
+        creadoEn: DateTime.now(),
+        foto: _photoBytes,
+        tipoFoto: _photoContentType,
+        analisis: _analysis,
+        nombre: _nameController.text,
+        descripcion: _descriptionController.text,
+        precioOriginal: _originalPriceController.text,
+        precioRescate: _discountedPriceController.text,
+        cantidad: _quantityController.text,
+      ));
+      return true;
+    } catch (e) {
+      debugPrint('guardarBorrador: $e');
+      return false;
+    }
+  }
+
   @override
   void dispose() {
+    _originalPriceFocus.dispose();
     for (final c in [
       _nameController,
       _descriptionController,
@@ -114,6 +235,8 @@ class _PublishPackageViewState extends State<PublishPackageView> {
         _photoContentType = file.mimeType ?? 'image/jpeg';
         _error = null;
       });
+      // El análisis corre mientras el usuario escribe el precio.
+      if (_originalPriceController.text.isEmpty) _focusPrice();
       await _analyze();
     } catch (_) {
       if (mounted) setState(() => _error = 'No se pudo cargar la foto.');
@@ -168,7 +291,10 @@ class _PublishPackageViewState extends State<PublishPackageView> {
       if (!mounted || request != _analysisRequest) return;
       setState(() {
         _analysis = result;
-        if (result.esComida) _applyAnalysis(result);
+        if (result.esComida) {
+          _applyAnalysis(result);
+          _autoFillDiscount();
+        }
       });
     } on AnalisisException catch (e) {
       if (mounted && request == _analysisRequest) {
@@ -214,6 +340,7 @@ class _PublishPackageViewState extends State<PublishPackageView> {
     });
     final firestore = context.read<FirestoreService>();
     final storage = context.read<StorageService>();
+    final localDb = context.read<LocalDb>();
     final analysis = _usableAnalysis ? _analysis : null;
 
     try {
@@ -233,18 +360,28 @@ class _PublishPackageViewState extends State<PublishPackageView> {
         discountedPrice: _parsePrice(_discountedPriceController.text)!,
         availableQuantity: int.parse(_quantityController.text),
         photoUrl: photoUrl,
+        ingredients: analysis?.ingredientes ?? const [],
         allergens: analysis?.alergenos ?? const [],
         category: analysis == null || analysis.categoria.isEmpty
             ? null
             : analysis.categoria,
         perishability: analysis?.perecibilidad.name,
       );
+      // Ya publicado: un borrador anterior ya no sirve.
+      localDb.borrarBorrador(widget.restaurantId).catchError((Object e) {
+        debugPrint('borrarBorrador: $e');
+      });
       if (mounted) Navigator.of(context).pop(true);
     } on RescueException catch (e) {
       if (mounted) setState(() => _error = e.message);
-    } catch (_) {
+    } catch (e) {
+      debugPrint('publishPackage: $e');
+      final saved = await _saveDraft(localDb);
       if (mounted) {
-        setState(() => _error = 'No se pudo publicar. Intenta de nuevo.');
+        setState(() => _error = saved
+            ? 'No se pudo publicar. Guardamos un borrador en el teléfono: '
+                'puedes reintentar ahora o más tarde.'
+            : 'No se pudo publicar. Intenta de nuevo.');
       }
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -286,184 +423,211 @@ class _PublishPackageViewState extends State<PublishPackageView> {
             : 'Sugerido por IA')
         : null;
 
+    // Sin nombre todavía, publicar fallaría la validación: se espera a la IA.
+    final waitingForAi = _analyzing && _nameController.text.trim().isEmpty;
+
     return Scaffold(
       appBar: AppBar(title: const Text('Publicar excedente')),
+      // Fijo abajo para que se vea aunque el teclado esté abierto (RNF3).
+      bottomNavigationBar: SafeArea(
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(
+              16, 8, 16, 8 + MediaQuery.viewInsetsOf(context).bottom),
+          child: FilledButton.icon(
+            onPressed: _saving || waitingForAi ? null : _submit,
+            style: FilledButton.styleFrom(
+              minimumSize: const Size.fromHeight(52),
+            ),
+            icon: _saving || waitingForAi
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.publish),
+            label: Text(_saving
+                ? 'Publicando…'
+                : waitingForAi
+                    ? 'Esperando a la IA…'
+                    : 'Publicar'),
+          ),
+        ),
+      ),
       body: SafeArea(
         child: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 560),
             child: Form(
               key: _formKey,
-              child: ListView(
+              // No ListView: construye solo lo visible, y el campo de precio debe
+              // existir para poder enfocarlo al volver de la cámara.
+              child: SingleChildScrollView(
                 padding: const EdgeInsets.all(16),
-                children: [
-                  _PhotoPicker(
-                    bytes: _photoBytes,
-                    onPick: _saving ? null : _choosePhotoSource,
-                    onRemove: _saving || _photoBytes == null
-                        ? null
-                        : _removePhoto,
-                  ),
-                  if (_photoBytes != null) ...[
-                    const SizedBox(height: 12),
-                    _AnalysisPanel(
-                      analyzing: _analyzing,
-                      retrying: _retrying,
-                      streamTitle: _streamTitle,
-                      streamDescription: _streamDescription,
-                      analysis: _analysis,
-                      error: _analysisError,
-                      onRetry: _saving ? null : _analyze,
-                    ),
-                  ],
-                  const SizedBox(height: 20),
-                  TextFormField(
-                    controller: _nameController,
-                    readOnly: _saving,
-                    textCapitalization: TextCapitalization.sentences,
-                    textInputAction: TextInputAction.next,
-                    decoration: InputDecoration(
-                      labelText: 'Nombre del paquete',
-                      hintText: 'Bolsa sorpresa de panadería',
-                      helperText: _nameController.text == _aiName &&
-                              _aiName.isNotEmpty
-                          ? aiHelper
-                          : null,
-                      border: const OutlineInputBorder(),
-                    ),
-                    validator: (v) => (v?.trim().isEmpty ?? true)
-                        ? 'Ingresa un nombre.'
-                        : null,
-                    onChanged: (_) => setState(() {}),
-                  ),
-                  const SizedBox(height: 16),
-                  TextFormField(
-                    controller: _descriptionController,
-                    readOnly: _saving,
-                    textCapitalization: TextCapitalization.sentences,
-                    minLines: 2,
-                    maxLines: 4,
-                    decoration: InputDecoration(
-                      labelText: 'Descripción',
-                      hintText: '¿Qué puede incluir? Alérgenos, porciones…',
-                      helperText: _descriptionController.text ==
-                                  _aiDescription &&
-                              _aiDescription.isNotEmpty
-                          ? aiHelper
-                          : null,
-                      border: const OutlineInputBorder(),
-                    ),
-                    onChanged: (_) => setState(() {}),
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: TextFormField(
-                          controller: _originalPriceController,
-                          readOnly: _saving,
-                          keyboardType: const TextInputType.numberWithOptions(
-                              decimal: true),
-                          inputFormatters: [_priceFormatter],
-                          textInputAction: TextInputAction.next,
-                          decoration: const InputDecoration(
-                            labelText: 'Precio original',
-                            prefixText: r'$ ',
-                            border: OutlineInputBorder(),
-                          ),
-                          validator: _validatePrice,
-                          onChanged: (_) => setState(() {}),
-                        ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (_draft != null) ...[
+                      _DraftBanner(
+                        savedAt: _draftDateFormat.format(_draft!.creadoEn),
+                        onRestore: _restoreDraft,
+                        onDiscard: _discardDraft,
                       ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: TextFormField(
-                          controller: _discountedPriceController,
-                          readOnly: _saving,
-                          keyboardType: const TextInputType.numberWithOptions(
-                              decimal: true),
-                          inputFormatters: [_priceFormatter],
-                          textInputAction: TextInputAction.next,
-                          decoration: const InputDecoration(
-                            labelText: 'Precio rescate',
-                            prefixText: r'$ ',
-                            border: OutlineInputBorder(),
+                      const SizedBox(height: 16),
+                    ],
+                    _PhotoPicker(
+                      bytes: _photoBytes,
+                      onPick: _saving ? null : _choosePhotoSource,
+                      onRemove:
+                          _saving || _photoBytes == null ? null : _removePhoto,
+                    ),
+                    if (_photoBytes != null) ...[
+                      const SizedBox(height: 12),
+                      _AnalysisPanel(
+                        analyzing: _analyzing,
+                        retrying: _retrying,
+                        streamTitle: _streamTitle,
+                        streamDescription: _streamDescription,
+                        analysis: _analysis,
+                        error: _analysisError,
+                        onRetry: _saving ? null : _analyze,
+                      ),
+                    ],
+                    const SizedBox(height: 20),
+                    TextFormField(
+                      controller: _nameController,
+                      readOnly: _saving,
+                      textCapitalization: TextCapitalization.sentences,
+                      textInputAction: TextInputAction.next,
+                      decoration: InputDecoration(
+                        labelText: 'Nombre del paquete',
+                        hintText: 'Bolsa sorpresa de panadería',
+                        helperText: _nameController.text == _aiName &&
+                                _aiName.isNotEmpty
+                            ? aiHelper
+                            : null,
+                        border: const OutlineInputBorder(),
+                      ),
+                      validator: (v) => (v?.trim().isEmpty ?? true)
+                          ? 'Ingresa un nombre.'
+                          : null,
+                      onChanged: (_) => setState(() {}),
+                    ),
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      controller: _descriptionController,
+                      readOnly: _saving,
+                      textCapitalization: TextCapitalization.sentences,
+                      minLines: 2,
+                      maxLines: 4,
+                      decoration: InputDecoration(
+                        labelText: 'Descripción',
+                        hintText: '¿Qué puede incluir? Alérgenos, porciones…',
+                        helperText:
+                            _descriptionController.text == _aiDescription &&
+                                    _aiDescription.isNotEmpty
+                                ? aiHelper
+                                : null,
+                        border: const OutlineInputBorder(),
+                      ),
+                      onChanged: (_) => setState(() {}),
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: TextFormField(
+                            controller: _originalPriceController,
+                            focusNode: _originalPriceFocus,
+                            readOnly: _saving,
+                            keyboardType: const TextInputType.numberWithOptions(
+                                decimal: true),
+                            inputFormatters: [_priceFormatter],
+                            textInputAction: TextInputAction.next,
+                            decoration: const InputDecoration(
+                              labelText: 'Precio original',
+                              prefixText: r'$ ',
+                              border: OutlineInputBorder(),
+                            ),
+                            validator: _validatePrice,
+                            onChanged: (_) => setState(_autoFillDiscount),
                           ),
-                          validator: _validateDiscounted,
-                          onChanged: (_) => setState(() {}),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: TextFormField(
+                            controller: _discountedPriceController,
+                            readOnly: _saving,
+                            keyboardType: const TextInputType.numberWithOptions(
+                                decimal: true),
+                            inputFormatters: [_priceFormatter],
+                            textInputAction: TextInputAction.next,
+                            decoration: const InputDecoration(
+                              labelText: 'Precio rescate',
+                              prefixText: r'$ ',
+                              border: OutlineInputBorder(),
+                            ),
+                            validator: _validateDiscounted,
+                            onChanged: (_) => setState(() {}),
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (suggested != null && suggested != discounted) ...[
+                      const SizedBox(height: 8),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: ActionChip(
+                          avatar: const Icon(Icons.auto_awesome, size: 18),
+                          label: Text(
+                            'Usar precio sugerido: ${formatPrice(suggested)} '
+                            '(-${(perishability!.descuentoSugerido * 100).round()}%, '
+                            'perecibilidad ${perishability.etiqueta.toLowerCase()})',
+                          ),
+                          onPressed: _saving
+                              ? null
+                              : () => _useSuggestedPrice(suggested),
                         ),
                       ),
                     ],
-                  ),
-                  if (suggested != null && suggested != discounted) ...[
-                    const SizedBox(height: 8),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: ActionChip(
-                        avatar: const Icon(Icons.auto_awesome, size: 18),
-                        label: Text(
-                          'Usar precio sugerido: ${formatPrice(suggested)} '
-                          '(-${(perishability!.descuentoSugerido * 100).round()}%, '
-                          'perecibilidad ${perishability.etiqueta.toLowerCase()})',
-                        ),
-                        onPressed:
-                            _saving ? null : () => _useSuggestedPrice(suggested),
+                    if (showDiscount) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        'Descuento de '
+                        '${(((original - discounted) / original) * 100).round()}% · '
+                        'el cliente ahorra ${formatPrice(original - discounted)}',
+                        style: theme.textTheme.bodySmall
+                            ?.copyWith(color: theme.colorScheme.primary),
                       ),
-                    ),
-                  ],
-                  if (showDiscount) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      'Descuento de '
-                      '${(((original - discounted) / original) * 100).round()}% · '
-                      'el cliente ahorra ${formatPrice(original - discounted)}',
-                      style: theme.textTheme.bodySmall
-                          ?.copyWith(color: theme.colorScheme.primary),
-                    ),
-                  ],
-                  const SizedBox(height: 16),
-                  TextFormField(
-                    controller: _quantityController,
-                    readOnly: _saving,
-                    keyboardType: TextInputType.number,
-                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                    textInputAction: TextInputAction.done,
-                    decoration: const InputDecoration(
-                      labelText: 'Cantidad disponible',
-                      border: OutlineInputBorder(),
-                    ),
-                    validator: (v) {
-                      final n = int.tryParse(v ?? '');
-                      if (n == null || n <= 0) return 'Ingresa al menos 1.';
-                      return null;
-                    },
-                    onFieldSubmitted: (_) => _submit(),
-                  ),
-                  if (_error != null) ...[
+                    ],
                     const SizedBox(height: 16),
-                    Text(
-                      _error!,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: theme.colorScheme.error),
+                    TextFormField(
+                      controller: _quantityController,
+                      readOnly: _saving,
+                      keyboardType: TextInputType.number,
+                      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                      textInputAction: TextInputAction.done,
+                      decoration: const InputDecoration(
+                        labelText: 'Cantidad disponible',
+                        border: OutlineInputBorder(),
+                      ),
+                      validator: (v) {
+                        final n = int.tryParse(v ?? '');
+                        if (n == null || n <= 0) return 'Ingresa al menos 1.';
+                        return null;
+                      },
+                      onFieldSubmitted: (_) => _submit(),
                     ),
+                    if (_error != null) ...[
+                      const SizedBox(height: 16),
+                      Text(
+                        _error!,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: theme.colorScheme.error),
+                      ),
+                    ],
                   ],
-                  const SizedBox(height: 24),
-                  FilledButton.icon(
-                    onPressed: _saving ? null : _submit,
-                    style: FilledButton.styleFrom(
-                      minimumSize: const Size.fromHeight(52),
-                    ),
-                    icon: _saving
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.publish),
-                    label: Text(_saving ? 'Publicando…' : 'Publicar'),
-                  ),
-                ],
+                ),
               ),
             ),
           ),
@@ -548,12 +712,12 @@ class _AnalysisPanel extends StatelessWidget {
               Icon(Icons.auto_awesome, size: 18, color: colors.primary),
               const SizedBox(width: 8),
               Expanded(
-                child: Text('Análisis de IA', style: theme.textTheme.titleSmall),
+                child:
+                    Text('Análisis de IA', style: theme.textTheme.titleSmall),
               ),
               Chip(
                 visualDensity: VisualDensity.compact,
-                backgroundColor:
-                    lowConfidence ? colors.errorContainer : null,
+                backgroundColor: lowConfidence ? colors.errorContainer : null,
                 label: Text(
                   'Confianza ${(a.confianza * 100).round()}%',
                   style: TextStyle(
@@ -706,6 +870,60 @@ class _PhotoPicker extends StatelessWidget {
                     ),
                   ],
                 ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DraftBanner extends StatelessWidget {
+  const _DraftBanner({
+    required this.savedAt,
+    required this.onRestore,
+    required this.onDiscard,
+  });
+
+  final String savedAt;
+  final VoidCallback onRestore;
+  final VoidCallback onDiscard;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    return Card(
+      elevation: 0,
+      color: colors.secondaryContainer,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.drafts_outlined, color: colors.onSecondaryContainer),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Tienes una publicación sin enviar del $savedAt.',
+                    style: theme.textTheme.bodyMedium
+                        ?.copyWith(color: colors.onSecondaryContainer),
+                  ),
+                ),
+              ],
+            ),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                    onPressed: onDiscard, child: const Text('Descartar')),
+                FilledButton.tonal(
+                  onPressed: onRestore,
+                  child: const Text('Recuperar'),
+                ),
+              ],
+            ),
+          ],
         ),
       ),
     );

@@ -6,6 +6,8 @@ import '../../models/models.dart';
 import '../../providers/session_provider.dart';
 import '../../services/firestore_service.dart';
 import '../widgets/package_card.dart';
+import '../widgets/pickup_address.dart';
+import 'package_detail_view.dart';
 
 final _deliveredFormat = DateFormat('dd/MM/yyyy HH:mm');
 
@@ -99,7 +101,10 @@ class _AvailablePackagesTabState extends State<_AvailablePackagesTab> {
       if (!mounted) return;
       await showDialog<void>(
         context: context,
-        builder: (context) => _PinDialog(order: order),
+        builder: (context) => _PinDialog(
+          order: order,
+          loadRestaurant: () => _firestore.getRestaurant(order.restaurantId),
+        ),
       );
       widget.onReserved();
     } on RescueException catch (e) {
@@ -115,6 +120,18 @@ class _AvailablePackagesTabState extends State<_AvailablePackagesTab> {
     if (!mounted) return;
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _openDetail(FoodPackage package) async {
+    final reserve = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => PackageDetailView(
+          package: package,
+          loadRestaurant: () => _firestore.getRestaurant(package.restaurantId),
+        ),
+      ),
+    );
+    if (reserve == true && mounted) await _reserve(package);
   }
 
   @override
@@ -150,6 +167,7 @@ class _AvailablePackagesTabState extends State<_AvailablePackagesTab> {
             return PackageCard(
               key: ValueKey(package.id),
               package: package,
+              onTap: () => _openDetail(package),
               action: FilledButton(
                 onPressed: busy ? null : () => _reserve(package),
                 child: busy
@@ -243,9 +261,12 @@ class _ReserveDialogState extends State<_ReserveDialog> {
 }
 
 class _PinDialog extends StatelessWidget {
-  const _PinDialog({required this.order});
+  const _PinDialog({required this.order, this.loadRestaurant});
 
   final FoodOrder order;
+
+  /// Para apartados hechos antes de copiar la dirección al apartado.
+  final Future<Restaurant?> Function()? loadRestaurant;
 
   @override
   Widget build(BuildContext context) {
@@ -259,7 +280,13 @@ class _PinDialog extends StatelessWidget {
               textAlign: TextAlign.center),
           const SizedBox(height: 16),
           _PinText(pin: order.pin),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
+          PickupAddress(
+            address: order.restaurantAddress,
+            location: order.restaurantLocation,
+            load: loadRestaurant,
+          ),
+          const SizedBox(height: 12),
           Text(
             '${order.quantity} × ${order.packageName}\n'
             'Pagarás ${formatPrice(order.total)} al recoger.',
@@ -407,6 +434,8 @@ class _MyOrdersTabState extends State<_MyOrdersTab> {
           itemBuilder: (context, i) => _OrderCard(
             key: ValueKey(orders[i].id),
             order: orders[i],
+            loadRestaurant: () =>
+                _firestore.getRestaurant(orders[i].restaurantId),
             cancelling: _cancelling.contains(orders[i].id),
             onCancel: () => _cancel(orders[i]),
           ),
@@ -422,9 +451,13 @@ class _OrderCard extends StatelessWidget {
     required this.order,
     required this.cancelling,
     required this.onCancel,
+    this.loadRestaurant,
   });
 
   final FoodOrder order;
+
+  /// Para apartados hechos antes de copiar la dirección al apartado.
+  final Future<Restaurant?> Function()? loadRestaurant;
   final bool cancelling;
   final VoidCallback onCancel;
 
@@ -465,14 +498,21 @@ class _OrderCard extends StatelessWidget {
                 style: theme.textTheme.bodySmall,
               ),
             if (order.isActive) ...[
-              const SizedBox(height: 12),
+              const SizedBox(height: 8),
+              PickupAddress(
+                address: order.restaurantAddress,
+                location: order.restaurantLocation,
+                load: loadRestaurant,
+              ),
+              const SizedBox(height: 4),
               Row(
                 children: [
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('PIN de entrega', style: theme.textTheme.labelMedium),
+                        Text('PIN de entrega',
+                            style: theme.textTheme.labelMedium),
                         _PinText(pin: order.pin),
                       ],
                     ),

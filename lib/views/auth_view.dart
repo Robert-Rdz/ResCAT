@@ -1,8 +1,10 @@
+import 'package:cloud_firestore/cloud_firestore.dart' show GeoPoint;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../models/models.dart';
 import '../providers/session_provider.dart';
+import 'widgets/location_picker.dart';
 
 enum _AuthMode { login, register }
 
@@ -25,7 +27,11 @@ class _AuthViewState extends State<AuthView> {
   final _confirmController = TextEditingController();
   final _phoneController = TextEditingController();
   final _restaurantNameController = TextEditingController();
-  final _restaurantAddressController = TextEditingController();
+  final _streetController = TextEditingController();
+  final _neighborhoodController = TextEditingController();
+  final _cityController = TextEditingController();
+  final _postalCodeController = TextEditingController();
+  GeoPoint? _restaurantLocation;
 
   final _nameFocus = FocusNode(debugLabel: 'auth-name');
   final _emailFocus = FocusNode(debugLabel: 'auth-email');
@@ -33,8 +39,10 @@ class _AuthViewState extends State<AuthView> {
   final _confirmFocus = FocusNode(debugLabel: 'auth-confirm');
   final _phoneFocus = FocusNode(debugLabel: 'auth-phone');
   final _restaurantNameFocus = FocusNode(debugLabel: 'auth-restaurant-name');
-  final _restaurantAddressFocus =
-      FocusNode(debugLabel: 'auth-restaurant-address');
+  final _streetFocus = FocusNode(debugLabel: 'auth-street');
+  final _neighborhoodFocus = FocusNode(debugLabel: 'auth-neighborhood');
+  final _cityFocus = FocusNode(debugLabel: 'auth-city');
+  final _postalCodeFocus = FocusNode(debugLabel: 'auth-postal-code');
 
   // Sigue siendo accesible con clic/toque, pero Tab no se detiene en él.
   final _visibilityToggleFocus =
@@ -46,7 +54,10 @@ class _AuthViewState extends State<AuthView> {
   static const _passwordHints = [AutofillHints.password];
   static const _newPasswordHints = [AutofillHints.newPassword];
   static const _phoneHints = [AutofillHints.telephoneNumber];
-  static const _addressHints = [AutofillHints.fullStreetAddress];
+  static const _streetHints = [AutofillHints.streetAddressLine1];
+  static const _neighborhoodHints = [AutofillHints.sublocality];
+  static const _cityHints = [AutofillHints.addressCity];
+  static const _postalCodeHints = [AutofillHints.postalCode];
 
   _AuthMode _mode = _AuthMode.login;
   UserRole _role = UserRole.cliente;
@@ -60,7 +71,15 @@ class _AuthViewState extends State<AuthView> {
         _emailFocus,
         _passwordFocus,
         if (_isRegister) ...[_confirmFocus, _phoneFocus],
-        if (_isRestaurant) ...[_restaurantNameFocus, _restaurantAddressFocus],
+        if (_isRestaurant) ..._restaurantFocusNodes,
+      ];
+
+  List<FocusNode> get _restaurantFocusNodes => [
+        _restaurantNameFocus,
+        _streetFocus,
+        _neighborhoodFocus,
+        _cityFocus,
+        _postalCodeFocus,
       ];
 
   @override
@@ -72,7 +91,10 @@ class _AuthViewState extends State<AuthView> {
       _confirmController,
       _phoneController,
       _restaurantNameController,
-      _restaurantAddressController,
+      _streetController,
+      _neighborhoodController,
+      _cityController,
+      _postalCodeController,
     ]) {
       c.dispose();
     }
@@ -82,8 +104,7 @@ class _AuthViewState extends State<AuthView> {
       _passwordFocus,
       _confirmFocus,
       _phoneFocus,
-      _restaurantNameFocus,
-      _restaurantAddressFocus,
+      ..._restaurantFocusNodes,
       _visibilityToggleFocus,
     ]) {
       f.dispose();
@@ -103,7 +124,7 @@ class _AuthViewState extends State<AuthView> {
   void _setRole(UserRole role) {
     // Evita que el foco quede en un campo que ya no existe.
     if (role == UserRole.cliente &&
-        (_restaurantNameFocus.hasFocus || _restaurantAddressFocus.hasFocus)) {
+        _restaurantFocusNodes.any((f) => f.hasFocus)) {
       FocusManager.instance.primaryFocus?.unfocus();
     }
     setState(() => _role = role);
@@ -136,8 +157,15 @@ class _AuthViewState extends State<AuthView> {
         role: _role,
         phone: _phoneController.text,
         restaurantName: _isRestaurant ? _restaurantNameController.text : null,
-        restaurantAddress:
-            _isRestaurant ? _restaurantAddressController.text : null,
+        restaurantAddress: _isRestaurant
+            ? RestaurantAddress(
+                street: _streetController.text,
+                neighborhood: _neighborhoodController.text,
+                city: _cityController.text,
+                postalCode: _postalCodeController.text,
+              )
+            : null,
+        restaurantLocation: _isRestaurant ? _restaurantLocation : null,
       );
     } else {
       await session.signIn(
@@ -392,19 +420,62 @@ class _AuthViewState extends State<AuthView> {
                               v, 'Ingresa el nombre del restaurante.'),
                         ),
                         const SizedBox(height: 16),
+                        Text(
+                          'Dirección donde los clientes recogerán sus paquetes',
+                          style: theme.textTheme.bodySmall,
+                        ),
+                        const SizedBox(height: 8),
                         field(
-                          id: 'restaurant-address',
-                          controller: _restaurantAddressController,
-                          focusNode: _restaurantAddressFocus,
-                          capitalization: TextCapitalization.sentences,
-                          autofillHints: _addressHints,
+                          id: 'restaurant-street',
+                          controller: _streetController,
+                          focusNode: _streetFocus,
+                          capitalization: TextCapitalization.words,
+                          autofillHints: _streetHints,
                           decoration: decoration(
-                            'Dirección',
-                            Icons.place_outlined,
-                            helper: 'Donde los clientes recogerán sus paquetes.',
-                          ),
+                              'Calle y número', Icons.place_outlined),
                           validator: (v) =>
-                              _required(v, 'Ingresa la dirección.'),
+                              _required(v, 'Ingresa la calle y el número.'),
+                        ),
+                        const SizedBox(height: 16),
+                        field(
+                          id: 'restaurant-neighborhood',
+                          controller: _neighborhoodController,
+                          focusNode: _neighborhoodFocus,
+                          capitalization: TextCapitalization.words,
+                          autofillHints: _neighborhoodHints,
+                          decoration: decoration(
+                              'Colonia', Icons.holiday_village_outlined),
+                          validator: (v) =>
+                              _required(v, 'Ingresa la colonia.'),
+                        ),
+                        const SizedBox(height: 16),
+                        field(
+                          id: 'restaurant-city',
+                          controller: _cityController,
+                          focusNode: _cityFocus,
+                          capitalization: TextCapitalization.words,
+                          autofillHints: _cityHints,
+                          decoration: decoration('Ciudad y estado',
+                              Icons.location_city_outlined),
+                          validator: (v) =>
+                              _required(v, 'Ingresa la ciudad.'),
+                        ),
+                        const SizedBox(height: 16),
+                        field(
+                          id: 'restaurant-postal-code',
+                          controller: _postalCodeController,
+                          focusNode: _postalCodeFocus,
+                          keyboardType: TextInputType.number,
+                          autofillHints: _postalCodeHints,
+                          decoration: decoration('Código postal (opcional)',
+                              Icons.markunread_mailbox_outlined),
+                        ),
+                        const SizedBox(height: 16),
+                        LocationPicker(
+                          value: _restaurantLocation,
+                          enabled: !busy,
+                          onChanged: (p) =>
+                              setState(() => _restaurantLocation = p),
                         ),
                       ],
 

@@ -20,6 +20,13 @@ class FoodOrder {
 
   final String packageName;
   final String restaurantName;
+
+  /// Copia de la dirección del restaurante al apartar. Vacía en apartados
+  /// hechos antes de 2026-11-05.
+  final String restaurantAddress;
+
+  /// Copia de `restaurants/{id}.location`; con ella Maps abre el punto exacto.
+  final GeoPoint? restaurantLocation;
   final int quantity;
   final double unitPrice;
 
@@ -42,6 +49,8 @@ class FoodOrder {
     required this.pin,
     required this.status,
     required this.createdAt,
+    this.restaurantAddress = '',
+    this.restaurantLocation,
     this.deliveredAt,
     this.cancelledAt,
   });
@@ -59,6 +68,8 @@ class FoodOrder {
       packageId: data['packageId'] as String? ?? '',
       packageName: data['packageName'] as String? ?? '',
       restaurantName: data['restaurantName'] as String? ?? '',
+      restaurantAddress: data['restaurantAddress'] as String? ?? '',
+      restaurantLocation: data['restaurantLocation'] as GeoPoint?,
       quantity: (data['quantity'] as num?)?.toInt() ?? 1,
       unitPrice: (data['unitPrice'] as num?)?.toDouble() ?? 0,
       pin: data['pin'] as String? ?? '',
@@ -75,12 +86,16 @@ class FoodOrder {
         'packageId': packageId,
         'packageName': packageName,
         'restaurantName': restaurantName,
+        'restaurantAddress': restaurantAddress,
+        'restaurantLocation': restaurantLocation,
         'quantity': quantity,
         'unitPrice': unitPrice,
         'pin': pin,
         'status': status.name,
         'createdAt': Timestamp.fromDate(createdAt),
-        'deliveredAt': deliveredAt == null ? null : Timestamp.fromDate(deliveredAt!),
-        'cancelledAt': cancelledAt == null ? null : Timestamp.fromDate(cancelledAt!),
+        'deliveredAt':
+            deliveredAt == null ? null : Timestamp.fromDate(deliveredAt!),
+        'cancelledAt':
+            cancelledAt == null ? null : Timestamp.fromDate(cancelledAt!),
       };
 }

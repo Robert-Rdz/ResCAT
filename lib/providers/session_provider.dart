@@ -1,22 +1,29 @@
 import 'dart:async';
 
+import 'package:cloud_firestore/cloud_firestore.dart' show GeoPoint;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 
 import '../models/models.dart';
 import '../services/auth_service.dart';
 import '../services/firestore_service.dart';
+import '../services/secure_storage_service.dart';
 
 /// Sesión actual: escucha Firebase Auth y el documento `users/{uid}`.
 class SessionProvider extends ChangeNotifier {
-  SessionProvider({required AuthService auth, required FirestoreService firestore})
-      : _auth = auth,
-        _firestore = firestore {
+  SessionProvider({
+    required AuthService auth,
+    required FirestoreService firestore,
+    SecureStorageService? secureStorage,
+  })  : _auth = auth,
+        _firestore = firestore,
+        _secure = secureStorage ?? SecureStorageService() {
     _authSub = _auth.authStateChanges().listen(_onAuthChanged);
   }
 
   final AuthService _auth;
   final FirestoreService _firestore;
+  final SecureStorageService _secure;
   StreamSubscription<User?>? _authSub;
   StreamSubscription<AppUser?>? _userSub;
 
@@ -44,12 +51,14 @@ class SessionProvider extends ChangeNotifier {
       _user = null;
       _loading = false;
       notifyListeners();
+      _forgetCachedProfile();
       return;
     }
     // Durante login/registro no se cambia de pantalla para no perder el formulario.
     if (!_busy) {
       _loading = true;
       notifyListeners();
+      _restoreCachedProfile(firebaseUser.uid);
     }
     _userSub = _firestore.watchUser(firebaseUser.uid).listen(
       (appUser) {
@@ -62,6 +71,9 @@ class SessionProvider extends ChangeNotifier {
         _user = appUser;
         _loading = false;
         notifyListeners();
+        _secure.guardarPerfil(appUser).catchError((Object e) {
+          debugPrint('guardarPerfil: $e');
+        });
       },
       onError: (Object e) {
         debugPrint('Error al escuchar users/${firebaseUser.uid}: $e');
@@ -75,10 +87,34 @@ class SessionProvider extends ChangeNotifier {
     );
   }
 
+  /// Mientras Firestore responde, entra con el perfil cifrado de la última
+  /// sesión de este mismo usuario. Firestore lo reemplaza (o cierra la
+  /// sesión si el perfil ya no existe) en cuanto llega.
+  Future<void> _restoreCachedProfile(String uid) async {
+    AppUser? cached;
+    try {
+      cached = await _secure.perfilGuardado(uid);
+    } catch (e) {
+      debugPrint('perfilGuardado: $e');
+    }
+    if (cached == null || _user != null || _busy || !_loading) return;
+    if (_auth.currentUser?.uid != uid) return;
+    _user = cached;
+    _loading = false;
+    notifyListeners();
+  }
+
+  void _forgetCachedProfile() {
+    _secure.borrarSesion().catchError((Object e) {
+      debugPrint('borrarSesion: $e');
+    });
+  }
+
   void _handleMissingProfile() => _failSession(
       'Esta cuenta no tiene un perfil registrado. Crea una cuenta nueva.');
 
   void _failSession(String message) {
+    _forgetCachedProfile();
     _user = null;
     _loading = false;
     _authError = message;
@@ -97,7 +133,8 @@ class SessionProvider extends ChangeNotifier {
     required UserRole role,
     String? phone,
     String? restaurantName,
-    String? restaurantAddress,
+    RestaurantAddress? restaurantAddress,
+    GeoPoint? restaurantLocation,
   }) =>
       _runAuthAction(() => _auth.register(
             displayName: displayName,
@@ -107,6 +144,7 @@ class SessionProvider extends ChangeNotifier {
             phone: phone,
             restaurantName: restaurantName,
             restaurantAddress: restaurantAddress,
+            restaurantLocation: restaurantLocation,
           ));
 
   Future<bool> _runAuthAction(Future<void> Function() action) async {
@@ -147,7 +185,8 @@ class SessionProvider extends ChangeNotifier {
   static String _firestoreMessageFor(String code) => switch (code) {
         'permission-denied' =>
           'Firestore rechazó guardar tu perfil. Revisa las reglas de seguridad.',
-        'unavailable' || 'deadline-exceeded' =>
+        'unavailable' ||
+        'deadline-exceeded' =>
           'No se pudo conectar con el servidor. Intenta de nuevo.',
         'not-found' => 'La base de datos de Firestore no está configurada.',
         _ => 'No se pudo guardar tu perfil ($code).',
